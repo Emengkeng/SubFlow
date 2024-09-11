@@ -53,44 +53,29 @@ You can set these in a `.env.local` file in the root directory of the project.
 
 ```bash
 git clone https://github.com/leerob/next-saas-starter
-cd next-saas-starter
-```
-
-2. Install dependencies:
-
-```bash
 pnpm install
+pnpm db:setup
+pnpm db:seed
+pnpm dev
 ```
 
-3. Set up the database:
-
-Ensure your PostgreSQL instance is running and accessible. Run the following to apply migrations:
-
-```bash
-npx drizzle-kit sync
-```
-
-4. Set up Stripe CLI:
-
-To test Stripe webhooks locally, you'll need to install and log in to the Stripe CLI:
-
-```bash
-brew install stripe/stripe-cli/stripe
-stripe login
-stripe listen --forward-to localhost:3000/api/stripe/webhook
-```
-
-### Running Locally
+## Running Locally
 
 Once you have set up the environment variables and installed dependencies, run the development server:
 
 ```bash
-pnpm run dev
+pnpm dev
+```
+
+Then, also listen for Stripe webhooks locally through their CLI:
+
+```bash
+stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser to see the app in action.
 
-### Testing Payments
+## Testing Payments
 
 To test Stripe payments, use the following test card details:
 
