@@ -72,6 +72,7 @@ You can set these in a `.env.local` file in the root directory of the project.
 
 ```bash
 git clone https://github.com/leerob/next-saas-starter
+cd next-saas-starter
 pnpm install
 pnpm db:setup
 pnpm db:migrate
