@@ -6,8 +6,8 @@ import {
 } from "@solana/kit";
 
 const CONFIG = {
-  GATEWAY_URL: `https://tpg.sanctum.so/v1/mainnet?apiKey=${process.env.GATEWAY_API_KEY}`,
-  RPC_URL: process.env.RPC_URL || "https://api.mainnet-beta.solana.com",
+  GATEWAY_URL: process.env.NODE_ENV == "development" ? `https://tpg.sanctum.so/v1/devnet?apiKey=${process.env.GATEWAY_API_KEY}` : `https://tpg.sanctum.so/v1/mainnet?apiKey=${process.env.GATEWAY_API_KEY}`,
+  RPC_URL: process.env.NODE_ENV == "development" ? "https://api.devnet.solana.com" : "https://api.mainnet-beta.solana.com",
   JITO_TIP_RANGE: "medium" as const,
   CU_PRICE_MULTIPLIER: 1.2,
 };

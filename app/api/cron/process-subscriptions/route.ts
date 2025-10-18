@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     const subscriptions = await getDueSubscriptions();
     console.log(`📋 Found ${subscriptions.length} subscriptions due for payment`);
 
-    const executor = new PaymentExecutor();
+    const executor = await PaymentExecutor.create();
 
     // Process each subscription
     for (const subscription of subscriptions) {

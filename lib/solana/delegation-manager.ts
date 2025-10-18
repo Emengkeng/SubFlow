@@ -39,15 +39,20 @@ interface ApprovalResponse {
 export class DelegationManager {
   private rpc: ReturnType<typeof createSolanaRpc>;
   private backendAuthority: PublicKey;
+  const rpcUrl = process.env.NODE_ENV == "development" ? process.env.RPC_URL_TESTNET : process.env.RPC_URL_MAINNET;
 
-  constructor(rpcUrl?: string, backendAuthority?: string) {
+  constructor(backendAuthority?: string) {
+    if (!this.rpcUrl){
+        throw Error("RPC URL not confiured")
+    }
+
     this.rpc = createSolanaRpc(
-      rpcUrl || process.env.RPC_URL || "https://api.mainnet-beta.solana.com"
+      this.rpcUrl
     );
     this.backendAuthority = new PublicKey(
       backendAuthority || process.env.BACKEND_AUTHORITY!
     );
-  }
+  } 
 
   async createApprovalTransaction(request: ApprovalRequest): Promise<ApprovalResponse> {
     console.log("Creating approval transaction for:", request.userWallet);

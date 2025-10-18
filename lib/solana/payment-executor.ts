@@ -13,18 +13,18 @@ import {
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
 import { getTransferCheckedInstruction } from "@solana-program/token";
-import { createKeyPairSignerFromBytes } from "@solana/web3.js";
+import { createKeyPairSignerFromBytes } from "@solana/signers";
 import { SanctumGatewayClient } from "./sanctum-gateway";
 import {
   createPayment,
   updatePayment,
   createPaymentError,
   addToDeadLetterQueue,
-  type Subscription,
-  type Payment,
   createPlatformRevenue,
+  getPlatformConfig,
 } from "@/lib/db/subscription-queries";
 import bs58 from "bs58";
+import { Payment, Subscription } from "../db/schema";
 
 // ============================================================================
 // ERROR HANDLING
@@ -113,17 +113,28 @@ class PaymentErrorClassifier {
 
 export class PaymentExecutor {
   private gateway: SanctumGatewayClient;
-  private backendSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
+  private backendSigner!: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
   private maxRetries = 3;
   private retryDelays = [5000, 30000, 300000]; // 5s, 30s, 5min
+  private keyPair = process.env.BACKEND_KEYPAIR;
 
-  constructor(backendKeypair?: string) {
+  // Private constructor - use PaymentExecutor.create() instead
+  private constructor() {
     this.gateway = new SanctumGatewayClient();
-    
-    const keypairBytes = bs58.decode(
-      backendKeypair || process.env.BACKEND_KEYPAIR!
-    );
-    this.backendSigner = createKeyPairSignerFromBytes(keypairBytes) as any;
+    if (!this.keyPair) {
+      throw Error("Backend Key pair not set");
+    }
+  }
+
+  /**
+   * Static factory method to create an initialized PaymentExecutor
+   * Usage: const executor = await PaymentExecutor.create();
+   */
+  static async create(): Promise<PaymentExecutor> {
+    const executor = new PaymentExecutor();
+    const keypairBytes = bs58.decode(executor.keyPair!);
+    executor.backendSigner = await createKeyPairSignerFromBytes(keypairBytes);
+    return executor;
   }
 
   async executePayment(subscription: Subscription & { plan: any }): Promise<Payment> {

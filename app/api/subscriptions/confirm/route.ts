@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Execute immediate first payment
-    const executor = new PaymentExecutor();
+    const executor = await PaymentExecutor.create();
     let firstPayment;
     
     try {
