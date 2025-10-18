@@ -1,30 +1,134 @@
-# Next.js SaaS Starter
+# ⚡ SubFlow — Powered by Sanctum Gateway
 
-This is a starter template for building a SaaS application using **Next.js** with support for authentication, Stripe integration for payments, and a dashboard for logged-in users.
+> **Revolutionizing subscription automation and payments on Solana, built on the rock-solid foundation of [Sanctum Gateway](https://gateway.sanctum.so/docs).**
 
-**Demo: [https://next-saas-start.vercel.app/](https://next-saas-start.vercel.app/)**
+SubFlow is a **multi-subscription and webhook automation platform** that enables organizations to handle recurring payments, automate subscription renewals, and deliver verified webhook events — **all through the blazing-fast, censorship-resistant Sanctum network**.  
 
-## Features
+Where Sanctum handles *execution*, *delivery*, and *reliability on Solana*, SubFlow builds the **intelligence and automation layer** on top — managing billing cycles, retries, webhooks, and analytics for any application or merchant.
 
-- Marketing landing page (`/`) with animated Terminal element
-- Pricing page (`/pricing`) which connects to Stripe Checkout
-- Dashboard pages with CRUD operations on users/teams
-- Basic RBAC with Owner and Member roles
-- Subscription management with Stripe Customer Portal
-- Email/password authentication with JWTs stored to cookies
-- Global middleware to protect logged-in routes
-- Local middleware to protect Server Actions or validate Zod schemas
-- Activity logging system for any user events
+---
 
-## Tech Stack
+## 🌟 Why Sanctum Matters
 
-- **Framework**: [Next.js](https://nextjs.org/)
-- **Database**: [Postgres](https://www.postgresql.org/)
-- **ORM**: [Drizzle](https://orm.drizzle.team/)
-- **Payments**: [Stripe](https://stripe.com/)
-- **UI Library**: [shadcn/ui](https://ui.shadcn.com/)
+The **Sanctum Gateway** is the heartbeat of this project.  
+Without it, real-time, reliable blockchain payments would require direct node orchestration, rate-limit management, and custom retry logic.
 
-## Getting Started
+Sanctum changes that by providing:
+- ⚙️ **Universal RPC abstraction** — faster and safer than direct RPC calls  
+- 🚀 **Multi-route delivery system** — ensures every transaction *lands*, even under congestion  
+- 🔁 **Auto-tipping & compute unit management** — boosting transaction priority dynamically  
+- 💡 **Developer-first JSON-RPC API** — simple, consistent, and production-ready  
+
+By integrating Sanctum Gateway directly into our payment executor, SubFlow guarantees that **every recurring payment and webhook event reaches finality** — fast, reliable, and on-chain.
+
+---
+
+## 🧩 Architecture Overview
+
+### 🔧 How SubFlow Uses Sanctum
+- Fetches latest blockhash and compute unit configurations via Sanctum  
+- Builds and signs complex multi-instruction transactions  
+- Sends transactions using multiple delivery methods for maximum reliability  
+- Confirms finality using Sanctum’s confirmation endpoints  
+- Fetches real-time tip instructions via Jito integration for optimal performance  
+
+### Core Integration Example
+```ts
+const gateway = new SanctumGatewayClient();
+
+// Fetch dynamic tip instructions
+const tips = await gateway.getTipInstructions(feePayer);
+
+// Send transaction through Sanctum network
+const result = await gateway.sendTransaction(signedTransaction);
+
+// Confirm transaction finality
+await gateway.confirmTransaction(result.signature);
+````
+
+---
+
+## 🚀 Features
+
+### 💳 Multi-Subscription Management
+
+* Unlimited subscriptions per user
+* Individual billing cycles and retries
+* Real-time plan search and unified dashboard
+* Bulk cancellation and reactivation support
+
+### 🔔 Webhook Delivery System
+
+* HMAC-SHA256 signature verification
+* Exponential backoff retries (5 attempts)
+* Secure HTTPS webhook delivery
+* Test and verify endpoints for developers
+* Dead letter queue for failed events
+
+### 🧠 Smart Payment Executor
+
+* Dual-transfer logic (merchant + platform fee)
+* Dynamic priority fees using Sanctum
+* Auto-handling of congestion, timeouts, and RPC errors
+* Full classification and retry management
+
+---
+
+## 📊 Cron & Scheduling
+
+| Task                    | Endpoint                          | Interval        |
+| ----------------------- | --------------------------------- | --------------- |
+| Process subscriptions   | `/api/cron/process-subscriptions` | Every 5 minutes |
+| Deliver queued webhooks | `/api/cron/process-webhooks`      | Every 1 minute  |
+
+---
+
+## 📡 API Endpoints
+
+### User-Facing
+
+| Endpoint                              | Method | Description                |
+| ------------------------------------- | ------ | -------------------------- |
+| `/api/subscriptions/initiate`         | POST   | Start checkout             |
+| `/api/subscriptions/confirm`          | POST   | Confirm subscription       |
+| `/api/subscriptions/user/[wallet]`    | GET    | List user subscriptions    |
+| `/api/user/dashboard`                 | GET    | Unified dashboard          |
+| `/api/user/subscriptions/bulk-cancel` | POST   | Bulk cancellation          |
+| `/api/plans/search`                   | GET    | Search all available plans |
+
+### Merchant-Facing
+
+| Endpoint                        | Method | Description         |
+| ------------------------------- | ------ | ------------------- |
+| `/api/organizations`            | POST   | Create organization |
+| `/api/organizations/[id]/plans` | POST   | Create plan         |
+| `/api/webhooks/test`            | POST   | Send test webhook   |
+| `/api/webhooks/verify`          | POST   | Verify signatures   |
+
+### Admin & Cron
+
+| Endpoint                          | Method | Description               | Frequency   |
+| --------------------------------- | ------ | ------------------------- | ----------- |
+| `/api/cron/process-subscriptions` | POST   | Process due subscriptions | Every 5 min |
+| `/api/cron/process-webhooks`      | POST   | Deliver queued webhooks   | Every 1 min |
+| `/api/admin/metrics`              | GET    | System metrics            |             |
+| `/api/admin/payments/[id]/retry`  | POST   | Retry failed payments     |             |
+
+---
+
+## 🔐 Security Highlights
+
+* HMAC-SHA256 signature verification with timestamp validation
+* Role-based admin control
+* HTTPS enforcement
+* Cron job authentication via `CRON_SECRET`
+* Automatic error classification and DLQ backup
+
+---
+
+## ⚙️ Environment Setup
+
+### Required Environment Variables
 
 ### Prerequisites
 
@@ -53,93 +157,105 @@ You can set these in a `.env.local` file in the root directory of the project.
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/nextjs/saas-starter
-cd saas-starter
-pnpm install
+DATABASE_URL=
+RPC_URL=https://api.mainnet-beta.solana.com
+GATEWAY_API_KEY=your_sanctum_gateway_api_key
+BACKEND_KEYPAIR=base58_private_key
+CRON_SECRET=your_cron_secret
+WEBHOOK_SECRET=your_webhook_secret
 ```
 
-## Running Locally
+### Database Indexes
 
-[Install](https://docs.stripe.com/stripe-cli) and log in to your Stripe account:
+```sql
+CREATE INDEX idx_subscriptions_user ON subscriptions(user_wallet);
+CREATE INDEX idx_subscriptions_due ON subscriptions(next_billing_date, status)
+  WHERE status = 'active';
+CREATE UNIQUE INDEX unique_active_subscription
+  ON subscriptions(plan_id, user_wallet, status)
+  WHERE status IN ('active', 'pending_approval');
+```
+
+### Cron Jobs
 
 ```bash
-stripe login
+Subscriptions Processor: Every 5 minutes
+Webhook Dispatcher: Every 1 minute
 ```
 
-Use the included setup script to create your `.env` file:
+---
+
+## 🧠 Tech Stack
+
+* **Next.js (App Router)**
+* **TypeScript**
+* **PostgreSQL**
+* **Sanctum Gateway**
+* **CRON API Jobs**
+* **Serverless Architecture**
+
+---
+
+## 📈 Performance & Scalability
+
+* Efficient grouped processing by organization
+* Fully indexed queries for `user_wallet` and `next_billing_date`
+* Parallelized processing for thousands of subscriptions
+* Dead letter queue for resilient recovery
+
+---
+
+## 💡 Future Improvements
+
+* Add webhook event replay UI
+* Integrate subscription analytics dashboard
+* Add multi-chain payment support
+* Enable merchant-level custom webhook endpoints
+* Introduce real-time transaction monitoring via Sanctum WebSocket
+
+---
+
+## 🧠 Setup & Local Development
 
 ```bash
-pnpm db:setup
+# 1. Clone repository
+git clone https://github.com/Emengkeng/subflow.git
+cd subflow
+
+# 2. Install dependencies
+bun install
+
+# 3. Set environment variables
+cp .env.example .env
+
+# 4. Run development server
+bun dev
+
+# 5. Run scheduled jobs (optional)
+bun run cron:subscriptions
+bun run cron:webhooks
 ```
 
-Run the database migrations and seed the database with a default user and team:
+---
 
-```bash
-pnpm db:migrate
-pnpm db:seed
-```
+## 💬 Credits & Acknowledgements
 
-This will create the following user and team:
+### 🪄 Sanctum Gateway
 
-- User: `test@test.com`
-- Password: `admin123`
+**This project wouldn’t exist without [Sanctum Gateway](https://gateway.sanctum.so/docs).**
 
-You can also create new users through the `/sign-up` route.
+SubFlow is deeply integrated with Sanctum — it powers transaction execution, blockhash validation, tip management, and confirmation reliability.
+We extend our full appreciation to the **Sanctum team** for enabling developers to build next-generation decentralized payment infrastructure with simplicity and confidence.
 
-Finally, run the Next.js development server:
+> *SubFlow was originally scaffolded using a Next.js + Sanctum starter template, then extended into a full production-grade automation system.*
 
-```bash
-pnpm dev
-```
+---
 
-Open [http://localhost:3000](http://localhost:3000) in your browser to see the app in action.
+### ✨ Author
 
-You can listen for Stripe webhooks locally through their CLI to handle subscription change events:
+**Emengkeng Juslen Kenmini**
+Building decentralized automation tools for Africa and beyond 🌍
 
-```bash
-stripe listen --forward-to localhost:3000/api/stripe/webhook
-```
+---
 
-## Testing Payments
-
-To test Stripe payments, use the following test card details:
-
-- Card Number: `4242 4242 4242 4242`
-- Expiration: Any future date
-- CVC: Any 3-digit number
-
-## Going to Production
-
-When you're ready to deploy your SaaS application to production, follow these steps:
-
-### Set up a production Stripe webhook
-
-1. Go to the Stripe Dashboard and create a new webhook for your production environment.
-2. Set the endpoint URL to your production API route (e.g., `https://yourdomain.com/api/stripe/webhook`).
-3. Select the events you want to listen for (e.g., `checkout.session.completed`, `customer.subscription.updated`).
-
-### Deploy to Vercel
-
-1. Push your code to a GitHub repository.
-2. Connect your repository to [Vercel](https://vercel.com/) and deploy it.
-3. Follow the Vercel deployment process, which will guide you through setting up your project.
-
-### Add environment variables
-
-In your Vercel project settings (or during deployment), add all the necessary environment variables. Make sure to update the values for the production environment, including:
-
-1. `BASE_URL`: Set this to your production domain.
-2. `STRIPE_SECRET_KEY`: Use your Stripe secret key for the production environment.
-3. `STRIPE_WEBHOOK_SECRET`: Use the webhook secret from the production webhook you created in step 1.
-4. `POSTGRES_URL`: Set this to your production database URL.
-5. `AUTH_SECRET`: Set this to a random string. `openssl rand -base64 32` will generate one.
-
-## Other Templates
-
-While this template is intentionally minimal and to be used as a learning resource, there are other paid versions in the community which are more full-featured:
-
-- https://achromatic.dev
-- https://shipfa.st
-- https://makerkit.dev
-- https://zerotoshipped.com
-- https://turbostarter.dev
+### ❤️ Built on Sanctum. Trusted by Developers. Made for Builders.
