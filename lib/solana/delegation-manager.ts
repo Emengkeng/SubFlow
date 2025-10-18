@@ -12,6 +12,7 @@ import {
 import { 
   getApproveCheckedInstruction,
   getRevokeInstruction,
+  getAs
   getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
 } from "@solana-program/token";
@@ -71,7 +72,7 @@ export class DelegationManager {
 
     // Create approval instruction
     const approvalIx = getApproveCheckedInstruction({
-      account: address(userTokenAccount.toString()),
+      address: address(userTokenAccount.toString()),
       mint: address(tokenMint.toString()),
       delegate: address(this.backendAuthority.toString()),
       owner: address(userWallet.toString()),

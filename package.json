@@ -11,12 +11,17 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@solana-program/compute-budget": "^0.10.0",
+    "@solana-program/token": "^0.7.0",
+    "@solana/kit": "^4.0.0",
+    "@solana/web3.js": "^1.98.4",
     "@tailwindcss/postcss": "4.1.7",
     "@types/node": "^22.15.18",
     "@types/react": "19.1.4",
     "@types/react-dom": "19.1.5",
     "autoprefixer": "^10.4.21",
     "bcryptjs": "^3.0.2",
+    "bs58": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.5.0",
