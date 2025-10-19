@@ -11,6 +11,7 @@ import {
   jsonb,
   uuid,
   uniqueIndex,
+  index,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -58,7 +59,12 @@ export const activityLogs = pgTable('activity_logs', {
   action: text('action').notNull(),
   timestamp: timestamp('timestamp').notNull().defaultNow(),
   ipAddress: varchar('ip_address', { length: 45 }),
-});
+}, (table) => ({
+  teamIdIdx: index('activity_logs_team_id_idx').on(table.teamId),
+  userIdIdx: index('activity_logs_user_id_idx').on(table.userId),
+  timestampIdx: index('activity_logs_timestamp_idx').on(table.timestamp),
+  actionIdx: index('activity_logs_action_idx').on(table.action),
+}));
 
 export const invitations = pgTable('invitations', {
   id: serial('id').primaryKey(),
@@ -90,7 +96,10 @@ export const organizations = pgTable('organizations', {
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (table) => ({
+  apiKeyIdx: index('organizations_api_key_idx').on(table.apiKey),
+  isActiveIdx: index('organizations_is_active_idx').on(table.isActive),
+}));
 
 export const plans = pgTable('plans', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -133,6 +142,14 @@ export const subscriptions = pgTable('subscriptions', {
 }, (table) => ({
   uniqueActiveSubscription: uniqueIndex('unique_active_subscription')
     .on(table.planId, table.userWallet, table.status),
+
+   userWalletIdx: index('subscriptions_user_wallet_idx').on(table.userWallet),
+  planIdIdx: index('subscriptions_plan_id_idx').on(table.planId),
+  statusIdx: index('subscriptions_status_idx').on(table.status),
+  nextBillingDateIdx: index('subscriptions_next_billing_date_idx').on(table.nextBillingDate),
+  
+  statusAndDateIdx: index('subscriptions_status_date_idx')
+    .on(table.status, table.nextBillingDate),
 }));
 
 export const payments = pgTable('payments', {
@@ -151,7 +168,15 @@ export const payments = pgTable('payments', {
   slotConfirmed: bigint('slot_confirmed', { mode: 'number' }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
-});
+}, (table) => ({
+  subscriptionIdIdx: index('payments_subscription_id_idx').on(table.subscriptionId),
+  statusIdx: index('payments_status_idx').on(table.status),
+  txSignatureIdx: index('payments_tx_signature_idx').on(table.txSignature),
+  createdAtIdx: index('payments_created_at_idx').on(table.createdAt),
+  
+  subStatusIdx: index('payments_sub_status_idx')
+    .on(table.subscriptionId, table.status),
+}));
 
 export const paymentErrors = pgTable('payment_errors', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -178,7 +203,12 @@ export const webhooks = pgTable('webhooks', {
   responseBody: text('response_body'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   sentAt: timestamp('sent_at'),
-});
+}, (table) => ({
+  orgIdIdx: index('webhooks_organization_id_idx').on(table.organizationId),
+  statusIdx: index('webhooks_status_idx').on(table.status),
+  eventTypeIdx: index('webhooks_event_type_idx').on(table.eventType),
+  createdAtIdx: index('webhooks_created_at_idx').on(table.createdAt),
+}));
 
 export const deadLetterQueue = pgTable('dead_letter_queue', {
   id: uuid('id').primaryKey().defaultRandom(),
