@@ -12,10 +12,10 @@ import {
 import { 
   getApproveCheckedInstruction,
   getRevokeInstruction,
-  getAssociatedTokenAddressSync,
-  TOKEN_PROGRAM_ID,
+  findAssociatedTokenPda,
+  TOKEN_PROGRAM_ADDRESS,
 } from "@solana-program/token";
-import { PublicKey } from "@solana/web3.js";
+import { getAddressEncoder, getAddressDecoder } from "@solana/addresses";
 
 interface ApprovalRequest {
   userWallet: string;
@@ -37,16 +37,17 @@ interface ApprovalResponse {
 
 export class DelegationManager {
   private rpc: ReturnType<typeof createSolanaRpc>;
-  private backendAuthority: PublicKey;
+  private backendAuthority: string;
+  private rpcUrl = process.env.NODE_ENV == "development" ? process.env.RPC_URL_TESTNET : process.env.RPC_URL_MAINNET;
 
-  constructor(rpcUrl?: string, backendAuthority?: string) {
-    this.rpc = createSolanaRpc(
-      rpcUrl || process.env.RPC_URL || "https://api.mainnet-beta.solana.com"
-    );
-    this.backendAuthority = new PublicKey(
-      backendAuthority || process.env.BACKEND_AUTHORITY!
-    );
-  }
+  constructor(backendAuthority?: string) {
+    if (!this.rpcUrl){
+        throw Error("RPC URL not configured")
+    }
+
+    this.rpc = createSolanaRpc(this.rpcUrl);
+    this.backendAuthority = backendAuthority || process.env.BACKEND_AUTHORITY!;
+  } 
 
   async createApprovalTransaction(request: ApprovalRequest): Promise<ApprovalResponse> {
     console.log("Creating approval transaction for:", request.userWallet);
@@ -56,25 +57,25 @@ export class DelegationManager {
     const maxPayments = BigInt(request.maxPayments || 12);
     const totalAllowance = perPaymentAmount * maxPayments;
 
-    // Get user's token account
-    const userWallet = new PublicKey(request.userWallet);
-    const tokenMint = new PublicKey(request.tokenMint);
-    const userTokenAccount = getAssociatedTokenAddressSync(
-      tokenMint,
-      userWallet,
-      false,
-      TOKEN_PROGRAM_ID
-    );
+    // Get user's token account using PDA
+    const userWallet = address(request.userWallet);
+    const tokenMint = address(request.tokenMint);
+    
+    const [userTokenAccount] = await findAssociatedTokenPda({
+      mint: tokenMint,
+      owner: userWallet,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
 
     // Get token decimals (USDC = 6)
     const decimals = 6;
 
     // Create approval instruction
     const approvalIx = getApproveCheckedInstruction({
-      account: address(userTokenAccount.toString()),
-      mint: address(tokenMint.toString()),
-      delegate: address(this.backendAuthority.toString()),
-      owner: address(userWallet.toString()),
+      source: userTokenAccount,
+      mint: tokenMint,
+      delegate: address(this.backendAuthority),
+      owner: userWallet,
       amount: totalAllowance,
       decimals: decimals,
     });
@@ -86,7 +87,7 @@ export class DelegationManager {
       createTransactionMessage({ version: 0 }),
       (txm) => appendTransactionMessageInstructions([approvalIx], txm),
       (txm) => setTransactionMessageFeePayerSigner(
-        { address: address(userWallet.toString()) } as any,
+        { address: userWallet } as any,
         txm
       ),
       (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
@@ -101,8 +102,8 @@ export class DelegationManager {
 
     return {
       approvalTransaction: getBase64EncodedWireTransaction(transaction),
-      delegateAuthority: this.backendAuthority.toString(),
-      tokenAccount: userTokenAccount.toString(),
+      delegateAuthority: this.backendAuthority,
+      tokenAccount: userTokenAccount,
       totalAllowance: totalAllowance.toString(),
       expiryDate,
       instructionsForUser: this.generateUserInstructions(
@@ -120,7 +121,8 @@ export class DelegationManager {
   ): Promise<boolean> {
     try {
       const accountInfo = await this.rpc.getAccountInfo(
-        address(userTokenAccount)
+        address(userTokenAccount),
+        { encoding: 'base64' }
       ).send();
 
       if (!accountInfo.value) {
@@ -128,8 +130,56 @@ export class DelegationManager {
         return false;
       }
 
-      //TODO: In production, parse token account data to verify delegation
-      // For now, return true if account exists
+      // Parse token account data
+      const data = accountInfo.value.data;
+      if (typeof data === 'string' || !data) {
+        console.error("Invalid account data format");
+        return false;
+      }
+
+      // Token account layout (SPL Token):
+      // 0-32: mint (32 bytes)
+      // 32-64: owner (32 bytes)
+      // 64-72: amount (8 bytes, u64)
+      // 72-76: delegate option (4 bytes, 0 = none, 1 = some)
+      // 76-108: delegate (32 bytes)
+      // 108-116: delegated amount (8 bytes, u64)
+      
+      const accountData = Buffer.from(data[0], 'base64');
+      
+      if (accountData.length < 165) {
+        console.error("Token account data too short");
+        return false;
+      }
+
+      // Check if delegation exists (byte 72)
+      const hasDelegation = accountData.readUInt32LE(72) === 1;
+      
+      if (!hasDelegation) {
+        console.error("No delegation found on token account");
+        return false;
+      }
+
+      // Read delegate address (bytes 76-108)
+      const delegateBytes = accountData.slice(76, 108);
+      const delegate = getAddressDecoder().decode(delegateBytes);
+
+      // Read delegated amount (bytes 108-116)
+      const delegatedAmount = accountData.readBigUInt64LE(108);
+
+      // Verify delegate matches expected
+      if (delegate !== expectedDelegate) {
+        console.error(`Delegate mismatch. Expected: ${expectedDelegate}, Got: ${delegate}`);
+        return false;
+      }
+
+      // Verify delegated amount is sufficient
+      if (delegatedAmount < minimumAmount) {
+        console.error(`Insufficient delegation. Required: ${minimumAmount}, Got: ${delegatedAmount}`);
+        return false;
+      }
+
+      console.log(`✅ Delegation verified: ${delegatedAmount} tokens delegated to ${delegate}`);
       return true;
     } catch (error) {
       console.error("Approval verification failed:", error);
@@ -141,19 +191,19 @@ export class DelegationManager {
     userWallet: string,
     tokenMint: string
   ): Promise<string> {
-    const userWalletPubkey = new PublicKey(userWallet);
-    const tokenMintPubkey = new PublicKey(tokenMint);
-    const userTokenAccount = getAssociatedTokenAddressSync(
-      tokenMintPubkey,
-      userWalletPubkey,
-      false,
-      TOKEN_PROGRAM_ID
-    );
+    const userWalletAddr = address(userWallet);
+    const tokenMintAddr = address(tokenMint);
+    
+    const [userTokenAccount] = await findAssociatedTokenPda({
+      mint: tokenMintAddr,
+      owner: userWalletAddr,
+      tokenProgram: TOKEN_PROGRAM_ADDRESS,
+    });
 
     // Create revoke instruction
     const revokeIx = getRevokeInstruction({
-      account: address(userTokenAccount.toString()),
-      owner: address(userWallet),
+        source: userTokenAccount,
+        owner: userWalletAddr,
     });
 
     const { value: latestBlockhash } = await this.rpc.getLatestBlockhash().send();
@@ -162,7 +212,7 @@ export class DelegationManager {
       createTransactionMessage({ version: 0 }),
       (txm) => appendTransactionMessageInstructions([revokeIx], txm),
       (txm) => setTransactionMessageFeePayerSigner(
-        { address: address(userWallet) } as any,
+        { address: userWalletAddr } as any,
         txm
       ),
       (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),

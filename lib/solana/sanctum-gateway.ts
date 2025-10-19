@@ -1,13 +1,14 @@
 import {
   createSolanaRpc,
   address,
-  getBase64EncodedWireTransaction,
   type Instruction,
+  signature,
 } from "@solana/kit";
+import { getBase64Encoder, getBase64Decoder } from "@solana/codecs-strings";
 
 const CONFIG = {
-  GATEWAY_URL: `https://tpg.sanctum.so/v1/mainnet?apiKey=${process.env.GATEWAY_API_KEY}`,
-  RPC_URL: process.env.RPC_URL || "https://api.mainnet-beta.solana.com",
+  GATEWAY_URL: process.env.NODE_ENV == "development" ? `https://tpg.sanctum.so/v1/devnet?apiKey=${process.env.GATEWAY_API_KEY}` : `https://tpg.sanctum.so/v1/mainnet?apiKey=${process.env.GATEWAY_API_KEY}`,
+  RPC_URL: process.env.NODE_ENV == "development" ? "https://api.devnet.solana.com" : "https://api.mainnet-beta.solana.com",
   JITO_TIP_RANGE: "medium" as const,
   CU_PRICE_MULTIPLIER: 1.2,
 };
@@ -54,11 +55,14 @@ export class SanctumGatewayClient {
     }));
   }
 
-  async sendTransaction(signedTransaction: Uint8Array): Promise<{
+  async sendTransaction(signedTransactionBytes: Uint8Array): Promise<{
     signature: string;
     deliveryMethod: string;
     slot?: number;
   }> {
+    // Convert Uint8Array to base64 string
+    const base64Transaction = getBase64Decoder().decode(signedTransactionBytes);
+
     const response = await fetch(this.gatewayUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -66,7 +70,7 @@ export class SanctumGatewayClient {
         id: `send-${Date.now()}`,
         jsonrpc: "2.0",
         method: "sendTransaction",
-        params: [getBase64EncodedWireTransaction(signedTransaction)],
+        params: [base64Transaction],
       }),
     });
 
@@ -104,10 +108,13 @@ export class SanctumGatewayClient {
     return BigInt(10000);
   }
 
-  async confirmTransaction(signature: string, maxAttempts = 30): Promise<boolean> {
+  async confirmTransaction(signatureString: string, maxAttempts = 30): Promise<boolean> {
+    // Convert string to Signature type
+    const sig = signature(signatureString);
+    
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const result = await this.rpc.getSignatureStatuses([signature]).send();
+        const result = await this.rpc.getSignatureStatuses([sig]).send();
         const status = result.value[0];
         
         if (status?.confirmationStatus === "confirmed" || 

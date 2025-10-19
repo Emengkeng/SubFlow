@@ -2,6 +2,7 @@ import {
   appendTransactionMessageInstructions,
   compileTransaction,
   createTransactionMessage,
+  getTransactionEncoder,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -13,18 +14,19 @@ import {
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
 import { getTransferCheckedInstruction } from "@solana-program/token";
-import { createKeyPairSignerFromBytes } from "@solana/web3.js";
+import { createKeyPairSignerFromBytes } from "@solana/signers";
 import { SanctumGatewayClient } from "./sanctum-gateway";
 import {
   createPayment,
   updatePayment,
   createPaymentError,
   addToDeadLetterQueue,
-  type Subscription,
-  type Payment,
   createPlatformRevenue,
+  getPlatformConfig,
 } from "@/lib/db/subscription-queries";
 import bs58 from "bs58";
+import { Payment, Subscription } from "../db/schema";
+import { bigint } from "drizzle-orm/gel-core";
 
 // ============================================================================
 // ERROR HANDLING
@@ -113,17 +115,28 @@ class PaymentErrorClassifier {
 
 export class PaymentExecutor {
   private gateway: SanctumGatewayClient;
-  private backendSigner: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
+  private backendSigner!: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
   private maxRetries = 3;
   private retryDelays = [5000, 30000, 300000]; // 5s, 30s, 5min
+  private keyPair = process.env.BACKEND_KEYPAIR;
 
-  constructor(backendKeypair?: string) {
+  // Private constructor - use PaymentExecutor.create() instead
+  private constructor() {
     this.gateway = new SanctumGatewayClient();
-    
-    const keypairBytes = bs58.decode(
-      backendKeypair || process.env.BACKEND_KEYPAIR!
-    );
-    this.backendSigner = createKeyPairSignerFromBytes(keypairBytes) as any;
+    if (!this.keyPair) {
+      throw Error("Backend Key pair not set");
+    }
+  }
+
+  /**
+   * Static factory method to create an initialized PaymentExecutor
+   * Usage: const executor = await PaymentExecutor.create();
+   */
+  static async create(): Promise<PaymentExecutor> {
+    const executor = new PaymentExecutor();
+    const keypairBytes = bs58.decode(executor.keyPair!);
+    executor.backendSigner = await createKeyPairSignerFromBytes(keypairBytes);
+    return executor;
   }
 
   async executePayment(subscription: Subscription & { plan: any }): Promise<Payment> {
@@ -150,7 +163,7 @@ export class PaymentExecutor {
         source: address(subscription.userTokenAccount),
         mint: address(subscription.tokenMint),
         destination: address(subscription.merchantTokenAccount),
-        owner: address(subscription.userWallet),
+        authority: address(subscription.userWallet),
         amount: merchantAmount,
         decimals: subscription.tokenDecimals,
         multiSigners: [this.backendSigner],
@@ -160,7 +173,7 @@ export class PaymentExecutor {
         source: address(subscription.userTokenAccount),
         mint: address(subscription.tokenMint),
         destination: address(platformConfig.platformFeeWallet),
-        owner: address(subscription.userWallet),
+        authority: address(subscription.userWallet),
         amount: platformFee,
         decimals: subscription.tokenDecimals,
         multiSigners: [this.backendSigner],
@@ -178,7 +191,7 @@ export class PaymentExecutor {
       ]);
 
       // Build compute budget instructions
-      const cuLimit = 300000n; // Increased for 2 transfers
+      const cuLimit = 300000; // Increased for 2 transfers
       const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
       const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
       const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: cuPrice });
@@ -188,7 +201,7 @@ export class PaymentExecutor {
         // Extract tip amount from instruction (approximate)
         return sum + BigInt(5000); // Jito tip ~0.000005 SOL
       }, BigInt(0));
-      const totalGasCost = (cuPrice * cuLimit / BigInt(1000000)) + tipAmount;
+      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount;
 
       // Build and compile transaction with BOTH transfers
       const transaction = pipe(
@@ -209,8 +222,12 @@ export class PaymentExecutor {
         transaction
       );
 
+      // Serialize transaction to bytes
+      const readonlyBytes = getTransactionEncoder().encode(signedTransaction);
+      const transactionBytes = new Uint8Array(readonlyBytes);
+
       // Send via Sanctum Gateway
-      const result = await this.gateway.sendTransaction(signedTransaction);
+      const result = await this.gateway.sendTransaction(transactionBytes);
 
       // Update payment record
       await updatePayment(payment.id, {
