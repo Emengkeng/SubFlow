@@ -1,4 +1,4 @@
-import { desc, and, eq, lte, isNull, sql } from 'drizzle-orm';
+import { desc, and, eq, lte, isNull, sql, inArray } from 'drizzle-orm';
 import { db } from './drizzle';
 import {
   organizations,
@@ -739,17 +739,10 @@ export async function createPlatformRevenue(data: {
 }
 
 export async function getPlatformRevenueStats(startDate?: Date, endDate?: Date) {
-  let query = db
-    .select({
-      totalFees: sql<string>`COALESCE(SUM(${platformRevenue.feeAmount}), 0)`,
-      totalGasCosts: sql<string>`COALESCE(SUM(${platformRevenue.gasCost}), 0)`,
-      totalNetRevenue: sql<string>`COALESCE(SUM(${platformRevenue.netRevenue}), 0)`,
-      transactionCount: sql<number>`COUNT(*)::int`,
-    })
-    .from(platformRevenue);
-
+  const conditions = [];
+  
   if (startDate && endDate) {
-    query = query.where(
+    conditions.push(
       and(
         sql`${platformRevenue.createdAt} >= ${startDate}`,
         sql`${platformRevenue.createdAt} <= ${endDate}`
@@ -757,7 +750,16 @@ export async function getPlatformRevenueStats(startDate?: Date, endDate?: Date) 
     );
   }
 
-  const result = await query;
+  const result = await db
+    .select({
+      totalFees: sql<string>`COALESCE(SUM(${platformRevenue.feeAmount}), 0)`,
+      totalGasCosts: sql<string>`COALESCE(SUM(${platformRevenue.gasCost}), 0)`,
+      totalNetRevenue: sql<string>`COALESCE(SUM(${platformRevenue.netRevenue}), 0)`,
+      transactionCount: sql<number>`COUNT(*)::int`,
+    })
+    .from(platformRevenue)
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+
   return result[0];
 }
 
