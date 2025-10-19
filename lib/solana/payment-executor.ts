@@ -163,7 +163,7 @@ export class PaymentExecutor {
         source: address(subscription.userTokenAccount),
         mint: address(subscription.tokenMint),
         destination: address(subscription.merchantTokenAccount),
-        owner: address(subscription.userWallet),
+        authority: address(subscription.userWallet),
         amount: merchantAmount,
         decimals: subscription.tokenDecimals,
         multiSigners: [this.backendSigner],
@@ -173,7 +173,7 @@ export class PaymentExecutor {
         source: address(subscription.userTokenAccount),
         mint: address(subscription.tokenMint),
         destination: address(platformConfig.platformFeeWallet),
-        owner: address(subscription.userWallet),
+        authority: address(subscription.userWallet),
         amount: platformFee,
         decimals: subscription.tokenDecimals,
         multiSigners: [this.backendSigner],
@@ -191,7 +191,7 @@ export class PaymentExecutor {
       ]);
 
       // Build compute budget instructions
-      const cuLimit = 300000n; // Increased for 2 transfers
+      const cuLimit = 300000; // Increased for 2 transfers
       const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
       const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
       const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: cuPrice });
@@ -201,7 +201,7 @@ export class PaymentExecutor {
         // Extract tip amount from instruction (approximate)
         return sum + BigInt(5000); // Jito tip ~0.000005 SOL
       }, BigInt(0));
-      const totalGasCost = (cuPrice * cuLimit / BigInt(1000000)) + tipAmount;
+      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount;
 
       // Build and compile transaction with BOTH transfers
       const transaction = pipe(
