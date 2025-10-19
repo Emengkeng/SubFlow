@@ -13,6 +13,7 @@
   "dependencies": {
     "@solana-program/compute-budget": "^0.10.0",
     "@solana-program/token": "^0.7.0",
+    "@solana/codecs-strings": "^4.0.0",
     "@solana/keys": "^4.0.0",
     "@solana/kit": "^4.0.0",
     "@solana/signers": "^4.0.0",
