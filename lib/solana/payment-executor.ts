@@ -2,6 +2,7 @@ import {
   appendTransactionMessageInstructions,
   compileTransaction,
   createTransactionMessage,
+  getTransactionEncoder,
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
@@ -25,6 +26,7 @@ import {
 } from "@/lib/db/subscription-queries";
 import bs58 from "bs58";
 import { Payment, Subscription } from "../db/schema";
+import { bigint } from "drizzle-orm/gel-core";
 
 // ============================================================================
 // ERROR HANDLING
@@ -220,8 +222,12 @@ export class PaymentExecutor {
         transaction
       );
 
+      // Serialize transaction to bytes
+      const readonlyBytes = getTransactionEncoder().encode(signedTransaction);
+      const transactionBytes = new Uint8Array(readonlyBytes);
+
       // Send via Sanctum Gateway
-      const result = await this.gateway.sendTransaction(signedTransaction);
+      const result = await this.gateway.sendTransaction(transactionBytes);
 
       // Update payment record
       await updatePayment(payment.id, {
