@@ -1,8 +1,9 @@
 // Cancel multiple subscriptions at once
 import { NextRequest, NextResponse } from 'next/server';
-import { bulkCancelSubscriptions } from '@/lib/db/subscription-queries';
+import { bulkCancelSubscriptions, getSubscriptionById } from '@/lib/db/subscription-queries';
 import { DelegationManager } from '@/lib/solana/delegation-manager';
 import { sendSubscriptionCancelledWebhook } from '@/lib/webhooks/webhook-manager';
+import { CONFIG } from '@/lib/config';
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,12 +23,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Fetch full subscription details before cancelling
+    const subscriptionsWithDetails = await Promise.all(
+      subscriptionIds.map(id => getSubscriptionById(id))
+    );
+
+    // Filter out any null results
+    const validSubscriptions = subscriptionsWithDetails.filter(sub => sub !== null);
+
+    if (validSubscriptions.length === 0) {
+      return NextResponse.json(
+        { error: 'No valid subscriptions found' },
+        { status: 404 }
+      );
+    }
+
     // Bulk cancel
     const cancelled = await bulkCancelSubscriptions(subscriptionIds, userWallet);
+    if(!cancelled){
+        throw Error("Failed to cancel subscription")
+    }
 
     // Send webhooks for each cancelled subscription
-    // Note: In production, We will consider queuing these
-    for (const sub of cancelled) {
+    // Note: In production, we will consider queuing these
+    for (const sub of validSubscriptions) {
+        if(!sub){
+            throw Error("Failed to cancel subscription")
+        }
       await sendSubscriptionCancelledWebhook(sub.plan.organizationId, sub);
     }
 
@@ -35,11 +57,11 @@ export async function POST(request: NextRequest) {
     // User only needs to sign once to revoke all delegations
     const delegationManager = new DelegationManager();
     
-    // You may need to revoke for each unique token mint
+    // We may need to revoke for each unique token mint
     // For simplicity, assuming USDC for all
     const revokeTransaction = await delegationManager.createRevocationTransaction(
       userWallet,
-      'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' // USDC mint
+      CONFIG.USDC_ADDRESS // USDC mint
     );
 
     return NextResponse.json({
