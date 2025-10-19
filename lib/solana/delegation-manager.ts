@@ -72,10 +72,10 @@ export class DelegationManager {
 
     // Create approval instruction
     const approvalIx = getApproveCheckedInstruction({
-      token: userTokenAccount,
+      source: userTokenAccount,
       mint: tokenMint,
       delegate: address(this.backendAuthority),
-      authority: userWallet,
+      owner: userWallet,
       amount: totalAllowance,
       decimals: decimals,
     });
@@ -202,8 +202,8 @@ export class DelegationManager {
 
     // Create revoke instruction
     const revokeIx = getRevokeInstruction({
-        token: userTokenAccount,
-        authority: userWalletAddr,
+        source: userTokenAccount,
+        owner: userWalletAddr,
     });
 
     const { value: latestBlockhash } = await this.rpc.getLatestBlockhash().send();
