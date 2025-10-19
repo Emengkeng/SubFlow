@@ -119,7 +119,7 @@ export class WebhookManager {
             status: 'failed',
             responseStatus: response.status,
             responseBody: errorBody,
-            retryCount: webhook.retryCount + 1,
+            retryCount: (webhook.retryCount ?? 0) + 1,
           })
           .where(eq(webhooks.id, webhook.id));
 
@@ -134,7 +134,7 @@ export class WebhookManager {
         .set({
           status: 'failed',
           responseBody: error.message,
-          retryCount: webhook.retryCount + 1,
+          retryCount: (webhook.retryCount ?? 0) + 1,
         })
         .where(eq(webhooks.id, webhook.id));
 
@@ -162,9 +162,17 @@ export class WebhookManager {
     let successful = 0;
     let failed = 0;
 
+    if (!pendingWebhooks){
+        return {
+            processed: 0,
+            successful,
+            failed,
+        };
+    }
+
     for (const webhook of pendingWebhooks) {
       // Skip if too many retries
-      if (webhook.retryCount >= 5) {
+      if ((webhook.retryCount ?? 0) >= 5) {
         await db
           .update(webhooks)
           .set({ status: 'failed', responseBody: 'Max retries exceeded' })
