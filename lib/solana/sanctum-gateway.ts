@@ -22,6 +22,10 @@ export class SanctumGatewayClient {
     this.rpc = createSolanaRpc(rpcUrl || CONFIG.RPC_URL);
   }
 
+  get _rpc() {
+    return this.rpc;
+  }
+
   async getTipInstructions(feePayer: string): Promise<Instruction[]> {
     const response = await fetch(this.gatewayUrl, {
       method: "POST",

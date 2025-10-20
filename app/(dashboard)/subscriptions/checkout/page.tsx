@@ -1,8 +1,7 @@
 'use client';
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Loader2, CheckCircle2, AlertCircle, Shield, Zap, XCircle, Wallet } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -31,6 +30,7 @@ export default function CheckoutPage() {
   const [approvalData, setApprovalData] = useState<any>(null);
   const [subscriptionId, setSubscriptionId] = useState<string>('');
   const [error, setError] = useState<string>('');
+  const [hasInitiated, setHasInitiated] = useState(false); // Track if we've already initiated
 
   const walletAddress = publicKey?.toBase58();
   const isWalletConnected = connected && !!walletAddress;
@@ -47,14 +47,19 @@ export default function CheckoutPage() {
       return;
     }
 
-    initiateCheckout();
-  }, [planId, isWalletConnected]);
+    // Only initiate once per wallet connection
+    if (!hasInitiated) {
+      initiateCheckout();
+    }
+  }, [planId, isWalletConnected, hasInitiated]);
 
   const initiateCheckout = async () => {
-    if (!walletAddress) return;
+    if (!walletAddress || hasInitiated) return;
 
     try {
       setStep('loading');
+      setHasInitiated(true); // Mark as initiated
+      
       const response = await fetch('/api/subscriptions/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -64,12 +69,19 @@ export default function CheckoutPage() {
         }),
       });
 
+      const data = await response.json();
+
       if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to initiate checkout');
+        // Check if it's a duplicate subscription error
+        if (data.error?.includes('already exists')) {
+          setError('You already have a pending subscription to this plan. Please check your subscriptions page.');
+        } else {
+          setError(data.error || 'Failed to initiate checkout');
+        }
+        setStep('error');
+        return;
       }
 
-      const data = await response.json();
       setPlanData(data.plan);
       setApprovalData(data.approval);
       setSubscriptionId(data.subscriptionId);
@@ -77,6 +89,7 @@ export default function CheckoutPage() {
     } catch (err: any) {
       setError(err.message);
       setStep('error');
+      setHasInitiated(false); // Allow retry on network errors
     }
   };
 
@@ -171,7 +184,12 @@ export default function CheckoutPage() {
               <XCircle className="size-12 text-red-500 mx-auto mb-4" />
               <h3 className="text-lg font-semibold mb-2">Checkout Failed</h3>
               <p className="text-muted-foreground mb-4">{error}</p>
-              <Button onClick={() => router.back()}>Go Back</Button>
+              <div className="flex gap-3 justify-center">
+                <Button variant="outline" onClick={() => router.push('/dashboard/subscriptions')}>
+                  View Subscriptions
+                </Button>
+                <Button onClick={() => router.back()}>Go Back</Button>
+              </div>
             </CardContent>
           </Card>
         </div>

@@ -13,7 +13,7 @@ import {
   getSetComputeUnitLimitInstruction,
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
-import { getTransferCheckedInstruction } from "@solana-program/token";
+import { findAssociatedTokenPda, getCreateAssociatedTokenInstructionAsync, getTransferCheckedInstruction, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
 import { createKeyPairSignerFromBytes } from "@solana/signers";
 import { SanctumGatewayClient } from "./sanctum-gateway";
 import {
@@ -27,6 +27,9 @@ import {
 import bs58 from "bs58";
 import { Payment, Subscription } from "../db/schema";
 import { bigint } from "drizzle-orm/gel-core";
+import {
+  getOrCreateAssociatedTokenAccount,
+} from "@solana/spl-token";
 
 // ============================================================================
 // ERROR HANDLING
@@ -120,7 +123,6 @@ export class PaymentExecutor {
   private retryDelays = [5000, 30000, 300000]; // 5s, 30s, 5min
   private keyPair = process.env.BACKEND_KEYPAIR;
 
-  // Private constructor - use PaymentExecutor.create() instead
   private constructor() {
     this.gateway = new SanctumGatewayClient();
     if (!this.keyPair) {
@@ -128,10 +130,6 @@ export class PaymentExecutor {
     }
   }
 
-  /**
-   * Static factory method to create an initialized PaymentExecutor
-   * Usage: const executor = await PaymentExecutor.create();
-   */
   static async create(): Promise<PaymentExecutor> {
     const executor = new PaymentExecutor();
     const keypairBytes = bs58.decode(executor.keyPair!);
@@ -154,16 +152,47 @@ export class PaymentExecutor {
 
     const payment = await createPayment({
       subscriptionId: subscription.id,
-      amount: totalAmount.toString(), // Total includes fee
+      amount: totalAmount.toString(),
     });
 
     try {
-      // Build TWO transfer instructions: one to merchant, one to platform
+      const instructions: any[] = [];
+
+      // 1. CHECK AND CREATE TOKEN ACCOUNT IF NEEDED (BACKEND PAYS!)
+      const userWalletAddr = address(subscription.userWallet);
+      const tokenMintAddr = address(subscription.tokenMint);
+      
+      const [userTokenAccount] = await findAssociatedTokenPda({
+        mint: tokenMintAddr,
+        owner: userWalletAddr,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      });
+
+      // Check if token account exists
+      const accountInfo = await this.gateway._rpc.getAccountInfo(
+        userTokenAccount,
+        { encoding: 'base64' }
+      ).send();
+
+      if (!accountInfo.value) {
+        console.log("🔨 Creating user's token account (backend pays rent)...");
+        
+        const createAtaIx = await getOrCreateAssociatedTokenAccount({
+          mint: tokenMintAddr,
+          owner: userWalletAddr,
+          payer: this.backendSigner.address,
+        });
+        
+        instructions.push(createAtaIx);
+        console.log("✅ Token account creation instruction added");
+      }
+
+      // 2. BUILD TRANSFER INSTRUCTIONS
       const merchantTransferIx = getTransferCheckedInstruction({
         source: address(subscription.userTokenAccount),
-        mint: address(subscription.tokenMint),
+        mint: tokenMintAddr,
         destination: address(subscription.merchantTokenAccount),
-        authority: address(subscription.userWallet),
+        authority: userWalletAddr,
         amount: merchantAmount,
         decimals: subscription.tokenDecimals,
         multiSigners: [this.backendSigner],
@@ -171,15 +200,15 @@ export class PaymentExecutor {
 
       const platformTransferIx = getTransferCheckedInstruction({
         source: address(subscription.userTokenAccount),
-        mint: address(subscription.tokenMint),
+        mint: tokenMintAddr,
         destination: address(platformConfig.platformFeeWallet),
-        authority: address(subscription.userWallet),
+        authority: userWalletAddr,
         amount: platformFee,
         decimals: subscription.tokenDecimals,
         multiSigners: [this.backendSigner],
       });
 
-      // Get priority fee and tip instructions
+      // 3. GET PRIORITY FEE AND TIP INSTRUCTIONS
       const [{ value: latestBlockhash }, priorityFee, tipIxs] = await Promise.all([
         this.gateway.getLatestBlockhash(),
         this.gateway.getPriorityFee([
@@ -190,46 +219,42 @@ export class PaymentExecutor {
         this.gateway.getTipInstructions(this.backendSigner.address),
       ]);
 
-      // Build compute budget instructions
-      const cuLimit = 300000; // Increased for 2 transfers
+      // 4. BUILD COMPUTE BUDGET INSTRUCTIONS
+      const cuLimit = instructions.length > 0 ? 400000 : 300000; // Higher if creating ATA
       const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
       const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
       const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: cuPrice });
 
-      // Calculate total gas cost (priority fee + tip)
-      const tipAmount = tipIxs.reduce((sum, ix) => {
-        // Extract tip amount from instruction (approximate)
-        return sum + BigInt(5000); // Jito tip ~0.000005 SOL
-      }, BigInt(0));
-      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount;
+      // Calculate total gas cost (priority fee + tip + ATA rent if applicable)
+      const tipAmount = tipIxs.reduce((sum, ix) => sum + BigInt(5000), BigInt(0));
+      const ataRent = instructions.length > 0 ? BigInt(2039280) : BigInt(0); // ~0.002 SOL
+      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount + ataRent;
 
-      // Build and compile transaction with BOTH transfers
+      // 5. ADD ALL INSTRUCTIONS IN ORDER
+      instructions.unshift(cuLimitIx, cuPriceIx); // Compute budget first
+      instructions.push(merchantTransferIx, platformTransferIx, ...tipIxs);
+
+      // 6. BUILD AND SIGN TRANSACTION
       const transaction = pipe(
         createTransactionMessage({ version: 0 }),
-        (txm) =>
-          appendTransactionMessageInstructions(
-            [cuLimitIx, cuPriceIx, merchantTransferIx, platformTransferIx, ...tipIxs],
-            txm
-          ),
+        (txm) => appendTransactionMessageInstructions(instructions, txm),
         (txm) => setTransactionMessageFeePayerSigner(this.backendSigner, txm),
         (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
         compileTransaction
       );
 
-      // Sign transaction
       const signedTransaction = await signTransaction(
         [this.backendSigner.keyPair],
         transaction
       );
 
-      // Serialize transaction to bytes
       const readonlyBytes = getTransactionEncoder().encode(signedTransaction);
       const transactionBytes = new Uint8Array(readonlyBytes);
 
-      // Send via Sanctum Gateway
+      // 7. SEND VIA SANCTUM GATEWAY
       const result = await this.gateway.sendTransaction(transactionBytes);
 
-      // Update payment record
+      // 8. UPDATE PAYMENT RECORD
       await updatePayment(payment.id, {
         status: 'sent',
         txSignature: result.signature,
@@ -238,7 +263,7 @@ export class PaymentExecutor {
         priorityFee: totalGasCost.toString(),
       });
 
-      // Record platform revenue
+      // 9. RECORD PLATFORM REVENUE
       await createPlatformRevenue({
         paymentId: payment.id,
         subscriptionId: subscription.id,
@@ -265,7 +290,7 @@ export class PaymentExecutor {
   }
 
   async executePaymentWithRetry(subscription: Subscription & { plan: any }): Promise<Payment> {
-    let lastError: ClassifiedError | null = null;
+    let lastError: any = null;
 
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       try {
@@ -281,30 +306,15 @@ export class PaymentExecutor {
         
         return payment;
       } catch (error: any) {
-        const classifiedError = PaymentErrorClassifier.classify(error);
-        lastError = classifiedError;
-
+        lastError = error;
         console.warn(`Attempt ${attempt + 1}/${this.maxRetries} failed: ${error.message}`);
 
-        if (!classifiedError.isRetryable || attempt === this.maxRetries - 1) {
+        if (attempt === this.maxRetries - 1) {
           break;
         }
 
         await this.sleep(this.retryDelays[attempt]);
       }
-    }
-
-    // All retries failed - handle error
-    if (lastError && !lastError.isRetryable) {
-      await addToDeadLetterQueue({
-        errorType: lastError.type,
-        errorMessage: lastError.message,
-        metadata: {
-          subscriptionId: subscription.id,
-          userWallet: subscription.userWallet,
-          amount: subscription.amountPerBilling,
-        },
-      });
     }
 
     throw new Error(`Payment failed after ${this.maxRetries} attempts: ${lastError?.message}`);
