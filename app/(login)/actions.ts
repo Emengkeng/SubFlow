@@ -13,8 +13,10 @@ import {
   type NewTeam,
   type NewTeamMember,
   type NewActivityLog,
+  type NewOrganization,
   ActivityType,
-  invitations
+  invitations,
+  organizations
 } from '@/lib/db/schema';
 import { comparePasswords, hashPassword, setSession } from '@/lib/auth/session';
 import { redirect } from 'next/navigation';
@@ -25,6 +27,12 @@ import {
   validatedAction,
   validatedActionWithUser
 } from '@/lib/auth/middleware';
+import crypto from 'crypto';
+
+function generateApiKey(): string {
+  return `sk_${crypto.randomBytes(32).toString('hex')}`;
+}
+
 
 async function logActivity(
   teamId: number | null | undefined,
@@ -109,6 +117,7 @@ const signUpSchema = z.object({
 export const signUp = validatedAction(signUpSchema, async (data, formData) => {
   const { email, password, inviteId } = data;
 
+  // Check if user already exists
   const existingUser = await db
     .select()
     .from(users)
@@ -144,9 +153,10 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
   let teamId: number;
   let userRole: string;
   let createdTeam: typeof teams.$inferSelect | null = null;
+  let organizationId: string;
 
   if (inviteId) {
-    // Check if there's a valid invitation
+    
     const [invitation] = await db
       .select()
       .from(invitations)
@@ -159,29 +169,63 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
       )
       .limit(1);
 
-    if (invitation) {
-      teamId = invitation.teamId;
-      userRole = invitation.role;
-
-      await db
-        .update(invitations)
-        .set({ status: 'accepted' })
-        .where(eq(invitations.id, invitation.id));
-
-      await logActivity(teamId, createdUser.id, ActivityType.ACCEPT_INVITATION);
-
-      [createdTeam] = await db
-        .select()
-        .from(teams)
-        .where(eq(teams.id, teamId))
-        .limit(1);
-    } else {
+    if (!invitation) {
       return { error: 'Invalid or expired invitation.', email, password };
     }
+
+    teamId = invitation.teamId;
+    userRole = invitation.role;
+
+    [createdTeam] = await db
+      .select()
+      .from(teams)
+      .where(eq(teams.id, teamId))
+      .limit(1);
+
+    if (!createdTeam || !createdTeam.organizationId) {
+      return { 
+        error: 'Team configuration error. Please contact support.', 
+        email, 
+        password 
+      };
+    }
+
+    organizationId = createdTeam.organizationId;
+
+    await db
+      .update(invitations)
+      .set({ status: 'accepted' })
+      .where(eq(invitations.id, invitation.id));
+
+    await logActivity(teamId, createdUser.id, ActivityType.ACCEPT_INVITATION);
+
   } else {
-    // Create a new team if there's no invitation
+    
+    const newOrganization: NewOrganization = {
+      name: `${email}'s Organization`,
+      email: email,
+      apiKey: generateApiKey(),
+      isActive: true
+    };
+
+    const [createdOrg] = await db
+      .insert(organizations)
+      .values(newOrganization)
+      .returning();
+
+    if (!createdOrg) {
+      return {
+        error: 'Failed to create organization. Please try again.',
+        email,
+        password
+      };
+    }
+
+    organizationId = createdOrg.id;
+
     const newTeam: NewTeam = {
-      name: `${email}'s Team`
+      name: `${email}'s Team`,
+      organizationId: organizationId
     };
 
     [createdTeam] = await db.insert(teams).values(newTeam).returning();
@@ -199,7 +243,7 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
 
     await logActivity(teamId, createdUser.id, ActivityType.CREATE_TEAM);
   }
-
+  
   const newTeamMember: NewTeamMember = {
     userId: createdUser.id,
     teamId: teamId,
@@ -211,14 +255,14 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
     logActivity(teamId, createdUser.id, ActivityType.SIGN_UP),
     setSession(createdUser)
   ]);
-
+  
   const redirectTo = formData.get('redirect') as string | null;
   if (redirectTo === 'checkout') {
     const priceId = formData.get('priceId') as string;
     return createCheckoutSession({ team: createdTeam, priceId });
   }
 
-  redirect('/dashboard');
+  redirect('dashboard/org/overview');
 });
 
 export async function signOut() {
