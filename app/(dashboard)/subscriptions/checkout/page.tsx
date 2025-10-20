@@ -4,10 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Loader2, CheckCircle2, AlertCircle, Shield, Zap, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle2, AlertCircle, Shield, Zap, XCircle, Wallet } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { Transaction, VersionedTransaction } from '@solana/web3.js';
 
 function formatUSDC(amount: string): string {
   return `$${(Number(amount) / 1_000_000).toFixed(2)}`;
@@ -20,20 +23,27 @@ export default function CheckoutPage() {
   const router = useRouter();
   const planId = searchParams.get('planId');
 
+  const { publicKey, signTransaction, connected } = useWallet();
+  const { connection } = useConnection();
+
   const [step, setStep] = useState<CheckoutStep>('loading');
   const [planData, setPlanData] = useState<any>(null);
   const [approvalData, setApprovalData] = useState<any>(null);
   const [subscriptionId, setSubscriptionId] = useState<string>('');
   const [error, setError] = useState<string>('');
 
-  // TODO: Get wallet from your Solana wallet context
-  const walletAddress = 'YOUR_WALLET_ADDRESS';
-  const isWalletConnected = !!walletAddress;
+  const walletAddress = publicKey?.toBase58();
+  const isWalletConnected = connected && !!walletAddress;
 
   useEffect(() => {
-    if (!planId || !isWalletConnected) {
-      setError(!planId ? 'No plan selected' : 'Please connect your wallet');
+    if (!planId) {
+      setError('No plan selected');
       setStep('error');
+      return;
+    }
+
+    if (!isWalletConnected) {
+      setStep('review');
       return;
     }
 
@@ -41,6 +51,8 @@ export default function CheckoutPage() {
   }, [planId, isWalletConnected]);
 
   const initiateCheckout = async () => {
+    if (!walletAddress) return;
+
     try {
       setStep('loading');
       const response = await fetch('/api/subscriptions/initiate', {
@@ -69,32 +81,56 @@ export default function CheckoutPage() {
   };
 
   const handleApproveAndSubscribe = async () => {
+    if (!signTransaction || !walletAddress) {
+      setError('Wallet not connected');
+      return;
+    }
+
     try {
       setStep('signing');
 
-      // TODO: Integrate with your Solana wallet
-      // 1. Decode the base64 transaction
-      // 2. Have user sign it
-      // 3. Send to Solana network
-      // 4. Get signature
+      // Decode the base64 transaction
+      const transactionBuffer = Buffer.from(approvalData.transaction, 'base64');
+      
+      // Try to deserialize as VersionedTransaction first (v0), fallback to legacy
+      let transaction: Transaction | VersionedTransaction;
+      try {
+        transaction = VersionedTransaction.deserialize(transactionBuffer);
+      } catch {
+        transaction = Transaction.from(transactionBuffer);
+      }
 
-      // Example (pseudo-code):
-      // const transaction = Transaction.from(Buffer.from(approvalData.transaction, 'base64'));
-      // const signed = await wallet.signTransaction(transaction);
-      // const signature = await connection.sendRawTransaction(signed.serialize());
-      // await connection.confirmTransaction(signature);
+      // Sign transaction with user's wallet
+      const signedTransaction = await signTransaction(transaction);
 
-      const mockSignature = 'MOCK_SIGNATURE_' + Date.now(); // Replace with actual
+      // Send to Solana network
+      const signature = await connection.sendRawTransaction(
+        signedTransaction.serialize(),
+        {
+          skipPreflight: false,
+          preflightCommitment: 'confirmed',
+        }
+      );
 
+      console.log('Transaction sent:', signature);
+
+      // Wait for confirmation
       setStep('confirming');
+      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
 
-      // Confirm subscription
+      if (confirmation.value.err) {
+        throw new Error('Transaction failed: ' + JSON.stringify(confirmation.value.err));
+      }
+
+      console.log('Transaction confirmed:', signature);
+
+      // Confirm subscription with backend
       const response = await fetch('/api/subscriptions/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subscriptionId,
-          signature: mockSignature,
+          signature,
         }),
       });
 
@@ -105,7 +141,8 @@ export default function CheckoutPage() {
 
       setStep('success');
     } catch (err: any) {
-      setError(err.message);
+      console.error('Checkout error:', err);
+      setError(err.message || 'An error occurred during checkout');
       setStep('error');
     }
   };
@@ -201,6 +238,26 @@ export default function CheckoutPage() {
     total: formatUSDC(planData.amount)
   } : null;
 
+  // Wallet not connected state
+  if (!isWalletConnected) {
+    return (
+      <section className="flex-1 p-4 lg:p-8">
+        <div className="max-w-2xl mx-auto">
+          <Card>
+            <CardContent className="p-12 text-center">
+              <Wallet className="size-12 text-orange-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Connect Your Wallet</h3>
+              <p className="text-muted-foreground mb-6">
+                Please connect your Solana wallet to continue with the checkout
+              </p>
+              <WalletMultiButton className="!bg-orange-500 hover:!bg-orange-600" />
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="flex-1 p-4 lg:p-8">
       <div className="max-w-2xl mx-auto">
@@ -247,6 +304,18 @@ export default function CheckoutPage() {
             }`} />
             Confirm
           </div>
+        </div>
+
+        {/* Wallet Connected Banner */}
+        <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <CheckCircle2 className="size-5 text-green-600" />
+            <div>
+              <p className="font-medium text-green-900">Wallet Connected</p>
+              <p className="text-sm text-green-700">{walletAddress?.slice(0, 4)}...{walletAddress?.slice(-4)}</p>
+            </div>
+          </div>
+          <WalletMultiButton className="!bg-green-600 hover:!bg-green-700 !text-xs !py-1 !px-3" />
         </div>
 
         {/* Main Content */}

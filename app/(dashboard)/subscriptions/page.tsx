@@ -20,12 +20,15 @@ import {
   XCircle,
   CheckCircle2,
   Clock,
-  AlertCircle
+  AlertCircle,
+  Wallet
 } from 'lucide-react';
 import useSWR from 'swr';
 import { Suspense, useState } from 'react';
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 
 const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
@@ -114,7 +117,13 @@ function formatUSDC(amount: string): string {
   return `$${(Number(amount) / 1_000_000).toFixed(2)}`;
 }
 
-function SubscriptionCard({ subscription }: { subscription: Subscription }) {
+function SubscriptionCard({ 
+  subscription, 
+  walletAddress 
+}: { 
+  subscription: Subscription;
+  walletAddress: string;
+}) {
   const [cancelling, setCancelling] = useState(false);
 
   const handleCancel = async () => {
@@ -125,7 +134,7 @@ function SubscriptionCard({ subscription }: { subscription: Subscription }) {
       const response = await fetch(`/api/subscriptions/${subscription.id}/cancel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userWallet: 'USER_WALLET_HERE' }), // Get from wallet context
+        body: JSON.stringify({ userWallet: walletAddress }),
       });
 
       if (response.ok) {
@@ -178,7 +187,10 @@ function SubscriptionCard({ subscription }: { subscription: Subscription }) {
                 <div>
                   <p className="text-muted-foreground">Next Billing</p>
                   <p className="font-medium">
-                    {formatDistanceToNow(new Date(subscription.nextBillingDate), { addSuffix: true })}
+                    {subscription.status === 'active' 
+                      ? formatDistanceToNow(new Date(subscription.nextBillingDate), { addSuffix: true })
+                      : 'N/A'
+                    }
                   </p>
                 </div>
                 <div>
@@ -198,17 +210,17 @@ function SubscriptionCard({ subscription }: { subscription: Subscription }) {
             <DropdownMenuContent align="end">
               <DropdownMenuItem asChild>
                 <Link href={`/dashboard/subscriptions/${subscription.id}`}>
-                  <ExternalLink className="size-4" />
+                  <ExternalLink className="size-4 mr-2" />
                   View Details
                 </Link>
               </DropdownMenuItem>
               {subscription.status === 'active' && (
                 <DropdownMenuItem 
-                  variant="destructive" 
+                  className="text-red-600"
                   onClick={handleCancel}
                   disabled={cancelling}
                 >
-                  <XCircle className="size-4" />
+                  <XCircle className="size-4 mr-2" />
                   {cancelling ? 'Cancelling...' : 'Cancel Subscription'}
                 </DropdownMenuItem>
               )}
@@ -273,7 +285,7 @@ function UpcomingPayments({ payments }: { payments: DashboardData['upcomingPayme
               <div className="text-right">
                 <p className="font-medium">{formatUSDC(payment.amount)}</p>
                 <p className="text-sm text-muted-foreground">
-                  in {payment.daysUntilDue} days
+                  in {payment.daysUntilDue} day{payment.daysUntilDue !== 1 ? 's' : ''}
                 </p>
               </div>
             </div>
@@ -347,7 +359,7 @@ function SubscriptionsContent({ walletAddress }: { walletAddress: string }) {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold">My Subscriptions</h2>
-          <Button asChild>
+          <Button asChild className="bg-orange-500 hover:bg-orange-600">
             <Link href="/subscriptions/browse">
               Browse Plans
             </Link>
@@ -362,7 +374,7 @@ function SubscriptionsContent({ walletAddress }: { walletAddress: string }) {
               <p className="text-muted-foreground mb-4">
                 Start subscribing to services to see them here
               </p>
-              <Button asChild>
+              <Button asChild className="bg-orange-500 hover:bg-orange-600">
                 <Link href="/subscriptions/browse">
                   Browse Available Plans
                 </Link>
@@ -372,7 +384,11 @@ function SubscriptionsContent({ walletAddress }: { walletAddress: string }) {
         ) : (
           <div className="space-y-4">
             {dashboard.subscriptions.map((subscription) => (
-              <SubscriptionCard key={subscription.id} subscription={subscription} />
+              <SubscriptionCard 
+                key={subscription.id} 
+                subscription={subscription}
+                walletAddress={walletAddress}
+              />
             ))}
           </div>
         )}
@@ -382,16 +398,38 @@ function SubscriptionsContent({ walletAddress }: { walletAddress: string }) {
 }
 
 export default function SubscriptionsPage() {
-  // TODO: Get wallet address from our Solana wallet context
-  const walletAddress = 'YOUR_WALLET_ADDRESS';
+  const { publicKey, connected } = useWallet();
+  const walletAddress = publicKey?.toBase58();
+
+  if (!connected || !walletAddress) {
+    return (
+      <section className="flex-1 p-4 lg:p-8">
+        <div className="max-w-4xl mx-auto">
+          <Card>
+            <CardContent className="p-12 text-center">
+              <Wallet className="size-12 text-orange-500 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">Connect Your Wallet</h3>
+              <p className="text-muted-foreground mb-6">
+                Please connect your Solana wallet to view your subscriptions
+              </p>
+              <WalletMultiButton className="!bg-orange-500 hover:!bg-orange-600" />
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="flex-1 p-4 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold mb-2">Subscriptions</h1>
-        <p className="text-muted-foreground">
-          Manage your recurring payments and subscriptions
-        </p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold mb-2">Subscriptions</h1>
+          <p className="text-muted-foreground">
+            Manage your recurring payments and subscriptions
+          </p>
+        </div>
+        <WalletMultiButton className="!bg-orange-500 hover:!bg-orange-600" />
       </div>
 
       <Suspense fallback={<SubscriptionsSkeleton />}>
