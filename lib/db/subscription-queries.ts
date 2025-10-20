@@ -776,3 +776,97 @@ export async function getPlatformRevenueByOrganization(organizationId: string) {
 
   return result[0];
 }
+
+/**
+ * Update a plan (limited fields for safety)
+ */
+export async function updatePlan(
+  planId: string,
+  data: {
+    name?: string;
+    description?: string;
+    isActive?: boolean;
+  }
+) {
+  const result = await db
+    .update(plans)
+    .set({ 
+      ...data, 
+      updatedAt: new Date() 
+    })
+    .where(eq(plans.id, planId))
+    .returning();
+
+  return result[0];
+}
+
+/**
+ * Delete a plan (soft delete by setting isActive to false)
+ * Use this approach to maintain referential integrity
+ */
+export async function deletePlan(planId: string) {
+  const result = await db
+    .update(plans)
+    .set({ 
+      isActive: false,
+      updatedAt: new Date() 
+    })
+    .where(eq(plans.id, planId))
+    .returning();
+
+  return result[0];
+}
+
+/**
+ * Hard delete a plan (only if no subscriptions exist)
+ * Alternative approach if you prefer complete removal
+ */
+export async function hardDeletePlan(planId: string) {
+  const result = await db
+    .delete(plans)
+    .where(eq(plans.id, planId))
+    .returning();
+
+  return result[0];
+}
+
+/**
+ * Check if a plan has any active subscriptions
+ */
+export async function checkPlanHasActiveSubscriptions(planId: string): Promise<boolean> {
+  const result = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(subscriptions)
+    .where(
+      and(
+        eq(subscriptions.planId, planId),
+        sql`${subscriptions.status} IN ('active', 'pending_approval')`
+      )
+    );
+
+  return (result[0]?.count || 0) > 0;
+}
+
+/**
+ * Get subscription count for a plan (all statuses)
+ */
+export async function getPlanSubscriptionCount(planId: string) {
+  const result = await db
+    .select({
+      status: subscriptions.status,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(subscriptions)
+    .where(eq(subscriptions.planId, planId))
+    .groupBy(subscriptions.status);
+
+  const totalActive = result
+    .filter(r => ['active', 'pending_approval'].includes(r.status))
+    .reduce((sum, r) => sum + r.count, 0);
+
+  return {
+    byStatus: result,
+    totalActive,
+    totalAll: result.reduce((sum, r) => sum + r.count, 0),
+  };
+}

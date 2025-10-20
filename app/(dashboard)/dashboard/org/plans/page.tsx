@@ -15,6 +15,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 
 type Plan = {
@@ -35,6 +45,11 @@ export default function OrgPlansPage() {
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
 
   useEffect(() => {
     fetchPlans();
@@ -43,8 +58,6 @@ export default function OrgPlansPage() {
   const fetchPlans = async () => {
     try {
       const orgId = localStorage.getItem('currentOrgId');
-      if (!orgId) return;
-
       const response = await fetch(`/api/organizations/${orgId}/plans`);
       if (response.ok) {
         const data = await response.json();
@@ -63,7 +76,6 @@ export default function OrgPlansPage() {
 
     const formData = new FormData(e.currentTarget);
     const orgId = localStorage.getItem('currentOrgId');
-    console.log('Creating plan for org:', orgId);
 
     try {
       const response = await fetch(`/api/organizations/${orgId}/plans`, {
@@ -76,7 +88,7 @@ export default function OrgPlansPage() {
           amountPerBilling: formData.get('amount'),
           billingPeriodDays: parseInt(formData.get('billingPeriod') as string),
           merchantTokenAccount: formData.get('merchantAccount'),
-          tokenDecimals: 6, // USDC default
+          tokenDecimals: 6,
         }),
       });
 
@@ -92,13 +104,79 @@ export default function OrgPlansPage() {
     }
   };
 
+  const handleEditPlan = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!selectedPlan) return;
+    
+    setIsEditing(true);
+    const formData = new FormData(e.currentTarget);
+    const orgId = localStorage.getItem('currentOrgId');
+
+    try {
+      const response = await fetch(`/api/organizations/${orgId}/plans`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          planId: selectedPlan.id,
+          name: formData.get('name'),
+          description: formData.get('description'),
+          isActive: formData.get('isActive') === 'true',
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (response.ok) {
+        await fetchPlans();
+        setEditDialogOpen(false);
+        setSelectedPlan(null);
+      } else {
+        alert(data.error || 'Failed to update plan');
+      }
+    } catch (error) {
+      console.error('Failed to update plan:', error);
+      alert('Failed to update plan');
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const handleDeletePlan = async () => {
+    if (!selectedPlan) return;
+    
+    setIsDeleting(true);
+    const orgId = localStorage.getItem('currentOrgId');
+
+    try {
+      const response = await fetch(
+        `/api/organizations/${orgId}/plans?planId=${selectedPlan.id}`,
+        { method: 'DELETE' }
+      );
+
+      const data = await response.json();
+
+      if (response.ok) {
+        await fetchPlans();
+        setDeleteDialogOpen(false);
+        setSelectedPlan(null);
+      } else {
+        alert(data.error || 'Failed to delete plan');
+      }
+    } catch (error) {
+      console.error('Failed to delete plan:', error);
+      alert('Failed to delete plan');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const formatAmount = (amount: string, decimals = 6) => {
     const num = parseFloat(amount) / Math.pow(10, decimals);
     return num.toFixed(2);
   };
 
   const getPlatformFee = () => {
-    return '1.00'; // 1 USDC platform fee
+    return '1.00';
   };
 
   const calculateTotalUserPays = (merchantAmount: string) => {
@@ -254,6 +332,96 @@ export default function OrgPlansPage() {
         </Dialog>
       </div>
 
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Plan</DialogTitle>
+            <DialogDescription>
+              Update plan details. Financial settings cannot be changed for plans with active subscriptions.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedPlan && (
+            <form onSubmit={handleEditPlan} className="space-y-4">
+              <div>
+                <Label htmlFor="edit-name">Plan Name *</Label>
+                <Input
+                  id="edit-name"
+                  name="name"
+                  defaultValue={selectedPlan.name}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-description">Description</Label>
+                <Textarea
+                  id="edit-description"
+                  name="description"
+                  defaultValue={selectedPlan.description || ''}
+                  rows={3}
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit-isActive">Status</Label>
+                <select
+                  id="edit-isActive"
+                  name="isActive"
+                  defaultValue={selectedPlan.isActive ? 'true' : 'false'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                >
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
+              </div>
+              <div className="flex justify-end gap-3 pt-4">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setEditDialogOpen(false);
+                    setSelectedPlan(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={isEditing}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  {isEditing ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Plan</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{selectedPlan?.name}"? This action cannot be undone. 
+              Plans with active subscriptions cannot be deleted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setSelectedPlan(null)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeletePlan}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete Plan'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Plans List */}
       {plans.length === 0 ? (
         <Card>
@@ -286,9 +454,28 @@ export default function OrgPlansPage() {
                       <Badge variant="secondary">Inactive</Badge>
                     )}
                   </div>
-                  <Button variant="ghost" size="sm">
-                    <Edit className="h-4 w-4" />
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => {
+                        setSelectedPlan(plan);
+                        setEditDialogOpen(true);
+                      }}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={() => {
+                        setSelectedPlan(plan);
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-600" />
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
