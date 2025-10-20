@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import { Manrope } from 'next/font/google';
 import { getUser, getTeamForUser } from '@/lib/db/queries';
 import { Providers } from './providers';
+import { SolanaWalletProvider } from './providers/wallet-provider';
 
 export const metadata: Metadata = {
   title: 'Next.js SaaS Starter',
@@ -20,11 +21,8 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Await the data in the server component
-  const [user, team] = await Promise.all([
-    getUser(),
-    getTeamForUser()
-  ]);
+  // Await data on the server
+  const [user, team] = await Promise.all([getUser(), getTeamForUser()]);
 
   return (
     <html
@@ -38,7 +36,9 @@ export default async function RootLayout({
             '/api/team': team
           }}
         >
-          {children}
+          <SolanaWalletProvider>
+            {children}
+          </SolanaWalletProvider>
         </Providers>
       </body>
     </html>
