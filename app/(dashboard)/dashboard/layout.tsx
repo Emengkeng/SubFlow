@@ -53,6 +53,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           ? data.organizations.find((o: Organization) => o.id === savedOrgId)
           : data.organizations[0];
         
+        // console.log('Current organization set to:', org);
+        localStorage.setItem('currentOrgId', org.id);
         setCurrentOrg(org || null);
       }
     } catch (error) {

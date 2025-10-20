@@ -16,6 +16,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { get } from 'http';
 
 type Plan = {
   id: string;
@@ -63,6 +64,7 @@ export default function OrgPlansPage() {
 
     const formData = new FormData(e.currentTarget);
     const orgId = localStorage.getItem('currentOrgId');
+    console.log('Creating plan for org:', orgId);
 
     try {
       const response = await fetch(`/api/organizations/${orgId}/plans`, {
@@ -95,6 +97,12 @@ export default function OrgPlansPage() {
     const num = parseFloat(amount) / Math.pow(10, decimals);
     return num.toFixed(2);
   };
+
+  const sumeTotal = (amount: string, decimals = 6) => {
+    const num = parseFloat(amount) / Math.pow(10, decimals);
+    const total = num + 1.00; // adding platform fee of 1 USDC
+    return total.toFixed(2);
+  }
 
   const getPlatformFee = () => {
     return '1.00'; // 1 USDC platform fee
@@ -302,14 +310,14 @@ export default function OrgPlansPage() {
                     <div className="flex items-center justify-between py-2 border-t">
                       <span className="text-sm text-gray-600">User Pays</span>
                       <span className="text-xl font-bold text-orange-600">
-                        ${formatAmount(plan.amountPerBilling, plan.tokenDecimals)}
+                        ${sumeTotal(plan.amountPerBilling, plan.tokenDecimals)}
                       </span>
                     </div>
 
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-600">You Receive</span>
                       <span className="font-semibold">
-                        ${(parseFloat(formatAmount(plan.amountPerBilling, plan.tokenDecimals)) - 1).toFixed(2)}
+                        ${(parseFloat(formatAmount(plan.amountPerBilling, plan.tokenDecimals)))}
                       </span>
                     </div>
 

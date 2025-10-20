@@ -6,7 +6,8 @@ export async function GET(
   { params }: { params: { orgId: string } }
 ) {
   try {
-    const plans = await getPlansByOrganization(params.orgId);
+    const paramsData = await params;
+    const plans = await getPlansByOrganization(paramsData.orgId);
 
     return NextResponse.json({
       success: true,
@@ -37,13 +38,14 @@ export async function POST(
     } = await request.json();
 
     // Get platform config for fee
+    const paramsData = await params;
     const platformConfig = await getPlatformConfig();
     const platformFee = BigInt(platformConfig?.platformFeeAmount || '1000000');
     const merchantAmount = BigInt(amountPerBilling);
     const totalUserPays = merchantAmount + platformFee;
 
     const plan = await createPlan({
-      organizationId: params.orgId,
+      organizationId: paramsData.orgId,
       name,
       description,
       tokenMint,
