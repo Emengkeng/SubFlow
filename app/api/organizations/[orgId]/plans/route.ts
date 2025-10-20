@@ -38,12 +38,19 @@ export async function POST(
     } = await request.json();
 
     // Get platform config for fee
+    const alltokenDecimals = 6;
     const paramsData = await params;
     const platformConfig = await getPlatformConfig();
     const platformFee = BigInt(platformConfig?.platformFeeAmount || '1000000');
-    const merchantAmount = BigInt(amountPerBilling);
+    const formatamountPerBilling = parseFloat(amountPerBilling) * Math.pow(10, alltokenDecimals);
+    const merchantAmount = BigInt(formatamountPerBilling);
     const totalUserPays = merchantAmount + platformFee;
 
+    // console.log('Creating plan with amounts:', {
+    //   merchantAmount: merchantAmount.toString(),
+    //   platformFee: platformFee.toString(),
+    //   totalUserPays: totalUserPays.toString(),
+    // });
     const plan = await createPlan({
       organizationId: paramsData.orgId,
       name,
