@@ -5,22 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1726443359662,
-      "tag": "0000_soft_the_anarchist",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1760835334491,
-      "tag": "0001_closed_salo",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1760963608306,
-      "tag": "0002_ambiguous_robin_chapel",
+      "when": 1761139929365,
+      "tag": "0000_magenta_sugar_man",
       "breakpoints": true
     }
   ]
