@@ -6,7 +6,8 @@ export async function GET(
   { params }: { params: { productId: string } }
 ) {
   try {
-    const product = await getProductById(params.productId);
+    const { productId } = await params;
+    const product = await getProductById(productId);
 
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });
@@ -30,13 +31,14 @@ export async function PATCH(
   { params }: { params: { productId: string } }
 ) {
   try {
+    const { productId } = await params;
     const apiKey = request.headers.get('x-api-key');
     if (!apiKey) {
       return NextResponse.json({ error: 'API key required' }, { status: 401 });
     }
 
     const body = await request.json();
-    const product = await updateProduct(params.productId, body);
+    const product = await updateProduct(productId, body);
 
     return NextResponse.json({ success: true, product });
   } catch (error: any) {
@@ -50,12 +52,13 @@ export async function DELETE(
   { params }: { params: { productId: string } }
 ) {
   try {
+    const { productId } = await params;
     const apiKey = request.headers.get('x-api-key');
     if (!apiKey) {
       return NextResponse.json({ error: 'API key required' }, { status: 401 });
     }
 
-    await deleteProduct(params.productId);
+    await deleteProduct(productId);
     return NextResponse.json({ success: true });
   } catch (error: any) {
     console.error('Delete product error:', error);
