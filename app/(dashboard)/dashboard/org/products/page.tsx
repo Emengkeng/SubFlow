@@ -59,10 +59,13 @@ export default function OrgProductsPage() {
   const fetchProducts = async () => {
     try {
       const orgId = localStorage.getItem('currentOrgId');
+      // UPDATED: Using organization-scoped endpoint
       const response = await fetch(`/api/organizations/${orgId}/products`);
       if (response.ok) {
         const data = await response.json();
         setProducts(data.products || []);
+      } else {
+        console.error('Failed to fetch products:', await response.text());
       }
     } catch (error) {
       console.error('Failed to fetch products:', error);
@@ -82,6 +85,7 @@ export default function OrgProductsPage() {
       const priceInUSDC = parseFloat(formData.get('price') as string);
       const priceInSmallestUnit = Math.floor(priceInUSDC * 1_000_000).toString();
 
+      // UPDATED: Using organization-scoped endpoint
       const response = await fetch(`/api/organizations/${orgId}/products`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -100,9 +104,13 @@ export default function OrgProductsPage() {
         await fetchProducts();
         setCreateDialogOpen(false);
         (e.target as HTMLFormElement).reset();
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Failed to create product');
       }
     } catch (error) {
       console.error('Failed to create product:', error);
+      alert('Failed to create product');
     } finally {
       setIsCreating(false);
     }
@@ -122,18 +130,21 @@ export default function OrgProductsPage() {
         ? Math.floor(parseFloat(priceValue as string) * 1_000_000).toString()
         : undefined;
 
-      const response = await fetch(`/api/organizations/${orgId}/products`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          productId: selectedProduct.id,
-          name: formData.get('name'),
-          description: formData.get('description'),
-          price: priceInSmallestUnit,
-          imageUrl: formData.get('imageUrl'),
-          isActive: formData.get('isActive') === 'true',
-        }),
-      });
+      // UPDATED: Using organization-scoped endpoint with productId in URL
+      const response = await fetch(
+        `/api/organizations/${orgId}/products/${selectedProduct.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: formData.get('name'),
+            description: formData.get('description'),
+            price: priceInSmallestUnit,
+            imageUrl: formData.get('imageUrl'),
+            isActive: formData.get('isActive') === 'true',
+          }),
+        }
+      );
 
       const data = await response.json();
       
@@ -159,8 +170,9 @@ export default function OrgProductsPage() {
     const orgId = localStorage.getItem('currentOrgId');
 
     try {
+      // UPDATED: Using organization-scoped endpoint with productId in URL
       const response = await fetch(
-        `/api/organizations/${orgId}/products?productId=${selectedProduct.id}`,
+        `/api/organizations/${orgId}/products/${selectedProduct.id}`,
         { method: 'DELETE' }
       );
 
@@ -331,7 +343,6 @@ export default function OrgProductsPage() {
         </Dialog>
       </div>
 
-      {/* Edit Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -414,7 +425,6 @@ export default function OrgProductsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -438,7 +448,6 @@ export default function OrgProductsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Products List */}
       {products.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
