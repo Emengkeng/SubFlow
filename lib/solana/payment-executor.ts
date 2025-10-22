@@ -13,103 +13,28 @@ import {
   getSetComputeUnitLimitInstruction,
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
-import { findAssociatedTokenPda, getCreateAssociatedTokenInstructionAsync, getTransferCheckedInstruction, TOKEN_PROGRAM_ADDRESS } from "@solana-program/token";
+import { 
+  getTransferCheckedInstruction, 
+  TOKEN_PROGRAM_ADDRESS 
+} from "@solana-program/token";
 import { createKeyPairSignerFromBytes } from "@solana/signers";
 import { SanctumGatewayClient } from "./sanctum-gateway";
 import {
   createPayment,
   updatePayment,
-  createPaymentError,
-  addToDeadLetterQueue,
   createPlatformRevenue,
   getPlatformConfig,
-} from "@/lib/db/subscription-queries";
+  addToDeadLetterQueue,
+} from "@/lib/db/payment-queries";
 import bs58 from "bs58";
-import { Payment, Subscription } from "../db/schema";
-import { bigint } from "drizzle-orm/gel-core";
-import {
-  getOrCreateAssociatedTokenAccount,
-} from "@solana/spl-token";
-
-// ============================================================================
-// ERROR HANDLING
-// ============================================================================
+import { PaymentSession, Product } from "../db/schema";
 
 export enum PaymentErrorType {
   NETWORK_ERROR = "NETWORK_ERROR",
-  RPC_TIMEOUT = "RPC_TIMEOUT",
-  BLOCKHASH_NOT_FOUND = "BLOCKHASH_NOT_FOUND",
-  CONGESTION = "CONGESTION",
   INSUFFICIENT_BALANCE = "INSUFFICIENT_BALANCE",
-  INVALID_DELEGATION = "INVALID_DELEGATION",
-  DELEGATION_EXPIRED = "DELEGATION_EXPIRED",
-  ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND",
+  INVALID_TRANSACTION = "INVALID_TRANSACTION",
+  TIMEOUT = "TIMEOUT",
   UNKNOWN_ERROR = "UNKNOWN_ERROR",
-}
-
-interface ClassifiedError {
-  type: PaymentErrorType;
-  message: string;
-  isRetryable: boolean;
-  requiresUserAction: boolean;
-}
-
-class PaymentErrorClassifier {
-  static classify(error: Error): ClassifiedError {
-    const msg = error.message.toLowerCase();
-
-    if (msg.includes("network") || msg.includes("timeout") || msg.includes("fetch failed")) {
-      return {
-        type: PaymentErrorType.NETWORK_ERROR,
-        message: error.message,
-        isRetryable: true,
-        requiresUserAction: false,
-      };
-    }
-
-    if (msg.includes("blockhash not found")) {
-      return {
-        type: PaymentErrorType.BLOCKHASH_NOT_FOUND,
-        message: error.message,
-        isRetryable: true,
-        requiresUserAction: false,
-      };
-    }
-
-    if (msg.includes("congestion")) {
-      return {
-        type: PaymentErrorType.CONGESTION,
-        message: error.message,
-        isRetryable: true,
-        requiresUserAction: false,
-      };
-    }
-
-    if (msg.includes("insufficient") || msg.includes("balance")) {
-      return {
-        type: PaymentErrorType.INSUFFICIENT_BALANCE,
-        message: error.message,
-        isRetryable: false,
-        requiresUserAction: true,
-      };
-    }
-
-    if (msg.includes("delegate") || msg.includes("approval")) {
-      return {
-        type: PaymentErrorType.INVALID_DELEGATION,
-        message: error.message,
-        isRetryable: false,
-        requiresUserAction: true,
-      };
-    }
-
-    return {
-      type: PaymentErrorType.UNKNOWN_ERROR,
-      message: error.message,
-      isRetryable: true,
-      requiresUserAction: false,
-    };
-  }
 }
 
 // ============================================================================
@@ -119,14 +44,12 @@ class PaymentErrorClassifier {
 export class PaymentExecutor {
   private gateway: SanctumGatewayClient;
   private backendSigner!: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
-  private maxRetries = 3;
-  private retryDelays = [5000, 30000, 300000]; // 5s, 30s, 5min
   private keyPair = process.env.BACKEND_KEYPAIR;
 
   private constructor() {
     this.gateway = new SanctumGatewayClient();
     if (!this.keyPair) {
-      throw Error("Backend Key pair not set");
+      throw Error("Backend keypair not set");
     }
   }
 
@@ -137,8 +60,16 @@ export class PaymentExecutor {
     return executor;
   }
 
-  async executePayment(subscription: Subscription & { plan: any }): Promise<Payment> {
-    console.log(`Executing payment for subscription ${subscription.id}`);
+  /**
+   * Execute a direct transfer from customer to merchant + platform
+   * Customer pays everything (no delegation needed!)
+   */
+  async executeDirectPayment(
+    session: PaymentSession & { product: Product & { organization: any } },
+    customerWallet: string,
+    customerTokenAccount: string
+  ): Promise<{ txSignature: string; payment: any }> {
+    console.log(`💰 Executing payment for session ${session.id}`);
 
     // Get platform config
     const platformConfig = await getPlatformConfig();
@@ -146,181 +77,170 @@ export class PaymentExecutor {
       throw new Error('Platform config not found');
     }
 
-    const merchantAmount = BigInt(subscription.amountPerBilling);
-    const platformFee = BigInt(platformConfig.platformFeeAmount);
-    const totalAmount = merchantAmount + platformFee;
-
-    const payment = await createPayment({
-      subscriptionId: subscription.id,
-      amount: totalAmount.toString(),
-    });
+    const merchantAmount = BigInt(session.amount);
+    const platformFee = BigInt(session.platformFee);
+    const totalAmount = BigInt(session.totalAmount);
 
     try {
       const instructions: any[] = [];
+      const tokenMintAddr = address(session.tokenMint);
+      const customerWalletAddr = address(customerWallet);
+      const customerTokenAccountAddr = address(customerTokenAccount);
 
-      // 1. CHECK AND CREATE TOKEN ACCOUNT IF NEEDED (BACKEND PAYS!)
-      const userWalletAddr = address(subscription.userWallet);
-      const tokenMintAddr = address(subscription.tokenMint);
-      
-      const [userTokenAccount] = await findAssociatedTokenPda({
-        mint: tokenMintAddr,
-        owner: userWalletAddr,
-        tokenProgram: TOKEN_PROGRAM_ADDRESS,
-      });
-
-      // Check if token account exists
-      const accountInfo = await this.gateway._rpc.getAccountInfo(
-        userTokenAccount,
-        { encoding: 'base64' }
-      ).send();
-
-      if (!accountInfo.value) {
-        console.log("🔨 Creating user's token account (backend pays rent)...");
-        
-        const createAtaIx = await getOrCreateAssociatedTokenAccount({
-          mint: tokenMintAddr,
-          owner: userWalletAddr,
-          payer: this.backendSigner.address,
-        });
-        
-        instructions.push(createAtaIx);
-        console.log("✅ Token account creation instruction added");
-      }
-
-      // 2. BUILD TRANSFER INSTRUCTIONS
+      // 1. TRANSFER TO MERCHANT
       const merchantTransferIx = getTransferCheckedInstruction({
-        source: address(subscription.userTokenAccount),
+        source: customerTokenAccountAddr,
         mint: tokenMintAddr,
-        destination: address(subscription.merchantTokenAccount),
-        authority: userWalletAddr,
+        destination: address(session.merchantWallet),
+        authority: customerWalletAddr,
         amount: merchantAmount,
-        decimals: subscription.tokenDecimals,
-        multiSigners: [this.backendSigner],
+        decimals: session.tokenDecimals,
       });
 
+      // 2. TRANSFER TO PLATFORM
       const platformTransferIx = getTransferCheckedInstruction({
-        source: address(subscription.userTokenAccount),
+        source: customerTokenAccountAddr,
         mint: tokenMintAddr,
         destination: address(platformConfig.platformFeeWallet),
-        authority: userWalletAddr,
+        authority: customerWalletAddr,
         amount: platformFee,
-        decimals: subscription.tokenDecimals,
-        multiSigners: [this.backendSigner],
+        decimals: session.tokenDecimals,
       });
 
-      // 3. GET PRIORITY FEE AND TIP INSTRUCTIONS
+      // 3. GET PRIORITY FEE AND TIP
       const [{ value: latestBlockhash }, priorityFee, tipIxs] = await Promise.all([
         this.gateway.getLatestBlockhash(),
         this.gateway.getPriorityFee([
-          subscription.userTokenAccount,
-          subscription.merchantTokenAccount,
+          customerTokenAccount,
+          session.merchantWallet,
           platformConfig.platformFeeWallet,
         ]),
         this.gateway.getTipInstructions(this.backendSigner.address),
       ]);
 
-      // 4. BUILD COMPUTE BUDGET INSTRUCTIONS
-      const cuLimit = instructions.length > 0 ? 400000 : 300000; // Higher if creating ATA
+      // 4. BUILD COMPUTE BUDGET
+      const cuLimit = 300000;
       const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
       const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
       const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: cuPrice });
 
-      // Calculate total gas cost (priority fee + tip + ATA rent if applicable)
+      // Calculate total gas cost
       const tipAmount = tipIxs.reduce((sum, ix) => sum + BigInt(5000), BigInt(0));
-      const ataRent = instructions.length > 0 ? BigInt(2039280) : BigInt(0); // ~0.002 SOL
-      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount + ataRent;
+      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount;
 
-      // 5. ADD ALL INSTRUCTIONS IN ORDER
-      instructions.unshift(cuLimitIx, cuPriceIx); // Compute budget first
-      instructions.push(merchantTransferIx, platformTransferIx, ...tipIxs);
+      // 5. ADD ALL INSTRUCTIONS
+      instructions.push(cuLimitIx, cuPriceIx, merchantTransferIx, platformTransferIx, ...tipIxs);
 
-      // 6. BUILD AND SIGN TRANSACTION
+      // 6. BUILD TRANSACTION (Customer is fee payer!)
       const transaction = pipe(
         createTransactionMessage({ version: 0 }),
         (txm) => appendTransactionMessageInstructions(instructions, txm),
-        (txm) => setTransactionMessageFeePayerSigner(this.backendSigner, txm),
+        (txm) => setTransactionMessageFeePayerSigner(
+          { address: customerWalletAddr } as any,
+          txm
+        ),
         (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
         compileTransaction
       );
 
-      const signedTransaction = await signTransaction(
-        [this.backendSigner.keyPair],
-        transaction
-      );
-
-      const readonlyBytes = getTransactionEncoder().encode(signedTransaction);
+      const readonlyBytes = getTransactionEncoder().encode(transaction);
       const transactionBytes = new Uint8Array(readonlyBytes);
 
-      // 7. SEND VIA SANCTUM GATEWAY
-      const result = await this.gateway.sendTransaction(transactionBytes);
+      // This transaction will be returned to frontend for customer to sign
+      // For now, we'll just return the unsigned transaction
+      const base64Transaction = Buffer.from(transactionBytes).toString('base64');
 
-      // 8. UPDATE PAYMENT RECORD
-      await updatePayment(payment.id, {
-        status: 'sent',
-        txSignature: result.signature,
-        deliveryMethod: result.deliveryMethod,
-        slotSent: result.slot,
-        priorityFee: totalGasCost.toString(),
-      });
-
-      // 9. RECORD PLATFORM REVENUE
-      await createPlatformRevenue({
-        paymentId: payment.id,
-        subscriptionId: subscription.id,
-        organizationId: subscription.plan.organizationId,
-        feeAmount: platformFee.toString(),
-        merchantAmount: merchantAmount.toString(),
-        totalAmount: totalAmount.toString(),
-        gasCost: totalGasCost.toString(),
-        txSignature: result.signature,
-      });
-
-      console.log(`✅ Payment sent: ${result.signature}`);
-      console.log(`💰 Merchant: ${merchantAmount}, Platform: ${platformFee}, Gas: ${totalGasCost}`);
-      
-      return { ...payment, txSignature: result.signature, status: 'sent' };
+      return {
+        txSignature: '', // Will be filled after customer signs
+        payment: {
+          sessionId: session.id,
+          productId: session.productId,
+          organizationId: session.organizationId,
+          merchantAmount: merchantAmount.toString(),
+          platformFee: platformFee.toString(),
+          totalAmount: totalAmount.toString(),
+          gasCost: totalGasCost.toString(),
+          transaction: base64Transaction,
+        },
+      };
     } catch (error: any) {
       console.error(`❌ Payment failed:`, error);
-      await updatePayment(payment.id, {
-        status: 'failed',
+      
+      await addToDeadLetterQueue({
+        sessionId: session.id,
+        errorType: PaymentErrorType.UNKNOWN_ERROR,
         errorMessage: error.message,
+        metadata: { session },
       });
+
       throw error;
     }
   }
 
-  async executePaymentWithRetry(subscription: Subscription & { plan: any }): Promise<Payment> {
-    let lastError: any = null;
+  /**
+   * Confirm payment after customer signs and submits transaction
+   */
+  async confirmPayment(
+    sessionId: string,
+    txSignature: string
+  ): Promise<{ confirmed: boolean; payment?: any }> {
+    console.log(`✅ Confirming payment: ${txSignature}`);
 
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      try {
-        const payment = await this.executePayment(subscription);
-        
-        // Confirm transaction
-        const confirmed = await this.gateway.confirmTransaction(payment.txSignature!);
-        
-        if (confirmed) {
-          await updatePayment(payment.id, { status: 'confirmed' });
-          console.log(`✅ Payment confirmed: ${payment.txSignature}`);
-        }
-        
-        return payment;
-      } catch (error: any) {
-        lastError = error;
-        console.warn(`Attempt ${attempt + 1}/${this.maxRetries} failed: ${error.message}`);
+    try {
+      // Wait for transaction confirmation
+      const confirmed = await this.gateway.confirmTransaction(txSignature, 30);
 
-        if (attempt === this.maxRetries - 1) {
-          break;
-        }
-
-        await this.sleep(this.retryDelays[attempt]);
+      if (!confirmed) {
+        throw new Error('Transaction confirmation timeout');
       }
-    }
 
-    throw new Error(`Payment failed after ${this.maxRetries} attempts: ${lastError?.message}`);
+      // Get session details
+      const session = await this.getSessionById(sessionId);
+      if (!session) {
+        throw new Error('Session not found');
+      }
+
+      // Create payment record
+      const payment = await createPayment({
+        sessionId,
+        productId: session.productId,
+        organizationId: session.organizationId,
+        merchantAmount: session.amount,
+        platformFee: session.platformFee,
+        totalAmount: session.totalAmount,
+        gasCost: '0', // Customer paid gas
+        txSignature,
+        deliveryMethod: 'customer_signed',
+      });
+
+      // Update payment status
+      await updatePayment(payment.id, { status: 'confirmed' });
+
+      // Record platform revenue
+      const platformConfig = await getPlatformConfig();
+      if (platformConfig) {
+        await createPlatformRevenue({
+          paymentId: payment.id,
+          organizationId: session.organizationId,
+          feeAmount: session.platformFee,
+          merchantAmount: session.amount,
+          totalAmount: session.totalAmount,
+          gasCost: '0',
+          txSignature,
+        });
+      }
+
+      console.log(`✅ Payment confirmed: ${txSignature}`);
+      return { confirmed: true, payment };
+    } catch (error: any) {
+      console.error(`❌ Payment confirmation failed:`, error);
+      return { confirmed: false };
+    }
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private async getSessionById(sessionId: string) {
+    // Import from queries
+    const { getPaymentSessionById } = await import('@/lib/db/payment-queries');
+    return await getPaymentSessionById(sessionId);
   }
 }

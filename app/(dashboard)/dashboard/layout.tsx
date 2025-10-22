@@ -80,7 +80,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const orgNavItems = [
     { href: '/dashboard/org/overview', icon: BarChart3, label: 'Overview' },
-    { href: '/dashboard/org/plans', icon: CreditCard, label: 'Plans' },
+    { href: '/dashboard/org/products', icon: CreditCard, label: 'products' },
     { href: '/dashboard/org/payments', icon: DollarSign, label: 'Payments' },
     { href: '/dashboard/org/revenue', icon: TrendingUp, label: 'Revenue' },
     { href: '/dashboard/org/settings', icon: Settings, label: 'Org Settings' }

@@ -16,14 +16,20 @@ const CONFIG = {
 export class SanctumGatewayClient {
   private gatewayUrl: string;
   private rpc: ReturnType<typeof createSolanaRpc>;
+  private rpcUrl: string;
 
   constructor(gatewayUrl?: string, rpcUrl?: string) {
     this.gatewayUrl = gatewayUrl || CONFIG.GATEWAY_URL;
     this.rpc = createSolanaRpc(rpcUrl || CONFIG.RPC_URL);
+    this.rpcUrl = rpcUrl || CONFIG.RPC_URL;
   }
 
   get _rpc() {
     return this.rpc;
+  }
+
+  get getrpcUrl() {
+    return this.rpcUrl;
   }
 
   async getTipInstructions(feePayer: string): Promise<Instruction[]> {

@@ -2,11 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { 
-  CheckCircle, XCircle, Clock, RefreshCw, 
-  ExternalLink, AlertCircle 
+  CheckCircle, XCircle, Clock, ExternalLink
 } from 'lucide-react';
 import {
   Table,
@@ -16,44 +14,40 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Input } from '@/components/ui/input';
 
 type Payment = {
   id: string;
-  subscriptionId: string;
+  productName: string;
+  customerWallet: string;
   amount: string;
   status: string;
   txSignature?: string;
-  retryCount: number;
-  errorMessage?: string;
   createdAt: string;
-  updatedAt: string;
-  subscription?: {
-    userWallet: string;
-    plan?: {
-      name: string;
-    };
-  };
 };
 
 export default function OrgPaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
-  const [failedPayments, setFailedPayments] = useState<Payment[]>([]);
+  const [filteredPayments, setFilteredPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
-  const [retrying, setRetrying] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
     fetchPayments();
   }, []);
 
+  useEffect(() => {
+    filterPayments();
+  }, [searchQuery, statusFilter, payments]);
+
   const fetchPayments = async () => {
     try {
-      const [failedRes] = await Promise.all([
-        fetch('/api/admin/failed-payments'),
-      ]);
-
-      if (failedRes.ok) {
-        const failedData = await failedRes.json();
-        setFailedPayments(failedData.failedPayments || []);
+      const orgId = localStorage.getItem('currentOrgId');
+      const response = await fetch(`/api/organizations/${orgId}/payments`);
+      if (response.ok) {
+        const data = await response.json();
+        setPayments(data.payments || []);
       }
     } catch (error) {
       console.error('Failed to fetch payments:', error);
@@ -62,26 +56,26 @@ export default function OrgPaymentsPage() {
     }
   };
 
-  const handleRetry = async (paymentId: string) => {
-    setRetrying(paymentId);
-    try {
-      const response = await fetch(`/api/admin/payments/${paymentId}/retry`, {
-        method: 'POST',
-      });
+  const filterPayments = () => {
+    let filtered = [...payments];
 
-      if (response.ok) {
-        await fetchPayments();
-      }
-    } catch (error) {
-      console.error('Retry failed:', error);
-    } finally {
-      setRetrying(null);
+    // Filter by status
+    if (statusFilter !== 'all') {
+      filtered = filtered.filter(p => p.status === statusFilter);
     }
-  };
 
-  const formatAmount = (amount: string, decimals = 6) => {
-    const num = parseFloat(amount) / Math.pow(10, decimals);
-    return num.toFixed(2);
+    // Filter by search query
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        p =>
+          p.productName.toLowerCase().includes(query) ||
+          p.customerWallet.toLowerCase().includes(query) ||
+          p.txSignature?.toLowerCase().includes(query)
+      );
+    }
+
+    setFilteredPayments(filtered);
   };
 
   const formatDate = (dateString: string) => {
@@ -89,19 +83,42 @@ export default function OrgPaymentsPage() {
     return date.toLocaleString();
   };
 
+  const formatWallet = (wallet: string) => {
+    if (!wallet) return 'N/A';
+    return `${wallet.substring(0, 4)}...${wallet.substring(wallet.length - 4)}`;
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'confirmed':
-        return <Badge className="bg-green-100 text-green-800">Confirmed</Badge>;
+        return (
+          <Badge className="bg-green-100 text-green-800">
+            <CheckCircle className="h-3 w-3 mr-1" />
+            Confirmed
+          </Badge>
+        );
       case 'pending':
-        return <Badge className="bg-yellow-100 text-yellow-800">Pending</Badge>;
+        return (
+          <Badge className="bg-yellow-100 text-yellow-800">
+            <Clock className="h-3 w-3 mr-1" />
+            Pending
+          </Badge>
+        );
       case 'failed':
-        return <Badge className="bg-red-100 text-red-800">Failed</Badge>;
-      case 'sent':
-        return <Badge className="bg-blue-100 text-blue-800">Sent</Badge>;
+        return (
+          <Badge className="bg-red-100 text-red-800">
+            <XCircle className="h-3 w-3 mr-1" />
+            Failed
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
+  };
+
+  const getExplorerUrl = (signature: string) => {
+    const network = process.env.NODE_ENV === 'development' ? 'devnet' : 'mainnet';
+    return `https://explorer.solana.com/tx/${signature}?cluster=${network}`;
   };
 
   if (loading) {
@@ -112,157 +129,162 @@ export default function OrgPaymentsPage() {
     );
   }
 
+  const confirmedCount = payments.filter(p => p.status === 'confirmed').length;
+  const pendingCount = payments.filter(p => p.status === 'pending').length;
+  const failedCount = payments.filter(p => p.status === 'failed').length;
+
   return (
     <section className="flex-1 p-4 lg:p-8">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">Payment Management</h1>
-        <p className="text-gray-600">Monitor and manage payment transactions</p>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Payment History</h1>
+        <p className="text-gray-600">View and manage all payment transactions</p>
       </div>
 
-      {/* Failed Payments Alert */}
-      {failedPayments.length > 0 && (
-        <Card className="mb-6 border-red-200 bg-red-50">
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-red-600" />
-              <CardTitle className="text-red-900">
-                {failedPayments.length} Failed Payment{failedPayments.length > 1 ? 's' : ''} Require Attention
-              </CardTitle>
-            </div>
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Confirmed</CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-600" />
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-red-800 mb-4">
-              These payments have failed and may need manual intervention or retry.
-            </p>
+            <div className="text-2xl font-bold text-green-600">
+              {confirmedCount}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Pending</CardTitle>
+            <Clock className="h-4 w-4 text-yellow-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-yellow-600">
+              {pendingCount}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Failed</CardTitle>
+            <XCircle className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-red-600">
+              {failedCount}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Filters */}
+      <Card className="mb-6">
+        <CardContent className="pt-6">
+          <div className="flex flex-col md:flex-row gap-4">
+            <div className="flex-1">
+              <Input
+                placeholder="Search by product, wallet, or transaction..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-md"
+            >
+              <option value="all">All Status</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="pending">Pending</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Payments Table */}
+      <Card>
+        <CardContent className="pt-6">
+          {filteredPayments.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-gray-500">
+                {payments.length === 0
+                  ? 'No payments yet'
+                  : 'No payments match your filters'}
+              </p>
+            </div>
+          ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>User</TableHead>
-                    <TableHead>Plan</TableHead>
+                    <TableHead>Product</TableHead>
+                    <TableHead>Customer</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Retries</TableHead>
-                    <TableHead>Error</TableHead>
+                    <TableHead>Transaction</TableHead>
                     <TableHead>Date</TableHead>
-                    <TableHead>Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {failedPayments.map((payment) => (
+                  {filteredPayments.map((payment) => (
                     <TableRow key={payment.id}>
-                      <TableCell className="font-mono text-xs">
-                        {payment.subscription?.userWallet?.substring(0, 8)}...
+                      <TableCell className="font-medium">
+                        {payment.productName}
                       </TableCell>
                       <TableCell>
-                        {payment.subscription?.plan?.name || 'N/A'}
+                        <span className="font-mono text-xs">
+                          {formatWallet(payment.customerWallet)}
+                        </span>
                       </TableCell>
                       <TableCell className="font-semibold">
-                        ${formatAmount(payment.amount)}
+                        {payment.amount}
                       </TableCell>
                       <TableCell>{getStatusBadge(payment.status)}</TableCell>
                       <TableCell>
-                        <Badge variant="outline">{payment.retryCount}/5</Badge>
+                        {payment.txSignature ? (
+                          <a
+                            href={getExplorerUrl(payment.txSignature)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-xs"
+                          >
+                            <span className="font-mono">
+                              {payment.txSignature.substring(0, 8)}...
+                            </span>
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        ) : (
+                          <span className="text-gray-400 text-xs">-</span>
+                        )}
                       </TableCell>
-                      <TableCell className="max-w-xs truncate text-xs text-red-600">
-                        {payment.errorMessage || 'Unknown error'}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {formatDate(payment.updatedAt)}
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleRetry(payment.id)}
-                          disabled={retrying === payment.id}
-                        >
-                          {retrying === payment.id ? (
-                            <>
-                              <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
-                              Retrying...
-                            </>
-                          ) : (
-                            <>
-                              <RefreshCw className="h-3 w-3 mr-1" />
-                              Retry
-                            </>
-                          )}
-                        </Button>
+                      <TableCell className="text-xs text-gray-600">
+                        {formatDate(payment.createdAt)}
                       </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
 
-      {/* Payment Statistics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Failed</CardTitle>
-            <XCircle className="h-4 w-4 text-red-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">
-              {failedPayments.length}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Needs attention
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg Retry Count</CardTitle>
-            <RefreshCw className="h-4 w-4 text-yellow-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {failedPayments.length > 0
-                ? (failedPayments.reduce((sum, p) => sum + p.retryCount, 0) / failedPayments.length).toFixed(1)
-                : '0'}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Out of 5 max
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Failed Amount</CardTitle>
-            <AlertCircle className="h-4 w-4 text-orange-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              ${failedPayments.reduce((sum, p) => sum + parseFloat(formatAmount(p.amount)), 0).toFixed(2)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Total value at risk
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Empty State */}
-      {failedPayments.length === 0 && (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <CheckCircle className="h-12 w-12 text-green-500 mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              All Payments Successful
-            </h3>
-            <p className="text-gray-600 text-center max-w-sm">
-              No failed payments at this time. Your subscription payments are processing smoothly.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      {/* Export Note */}
+      <Card className="mt-6 bg-gray-50">
+        <CardContent className="pt-6">
+          <p className="text-sm text-gray-600">
+            💡 <strong>Tip:</strong> All payment data is available via API for your own analytics and reporting.
+            Check the{' '}
+            <a href="/docs/api" className="text-blue-600 hover:text-blue-700">
+              API documentation
+            </a>{' '}
+            for details.
+          </p>
+        </CardContent>
+      </Card>
     </section>
   );
 }

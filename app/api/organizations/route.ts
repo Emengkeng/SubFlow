@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createOrganization } from '@/lib/db/subscription-queries';
 import { getUser } from '@/lib/db/queries';
 import { randomBytes } from 'crypto';
 import { organizations, teamMembers, teams } from '@/lib/db/schema';
 import { db } from '@/lib/db/drizzle';
 import { eq } from 'drizzle-orm';
+import { createOrganization } from '@/lib/db/payment-queries';
 
 export async function POST(request: NextRequest) {
   try {
