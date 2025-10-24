@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -40,7 +40,7 @@ const PLATFORM_FEE = 1.0; // $1 platform fee
 export default function ProductDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { publicKey, signTransaction, connected } = useWallet();
+  const { publicKey, signTransaction, connected, sendTransaction } = useWallet();
   
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,6 +48,9 @@ export default function ProductDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [txSignature, setTxSignature] = useState<string | null>(null);
+
+  // Prevent double-click purchases
+  const purchaseInProgress = useRef(false);
 
   const productId = params.productId as string;
 
@@ -77,6 +80,12 @@ export default function ProductDetailPage() {
   };
 
   const handlePurchase = async () => {
+    // Prevent double-clicks
+    if (purchaseInProgress.current) {
+      console.log('⚠️  Purchase already in progress, ignoring click');
+      return;
+    }
+
     if (!connected || !publicKey || !signTransaction) {
       setError('Please connect your wallet first');
       return;
@@ -87,11 +96,17 @@ export default function ProductDetailPage() {
       return;
     }
 
+    purchaseInProgress.current = true;
     setProcessing(true);
     setError(null);
 
+    let sessionId: string | null = null;
+
     try {
-      // Step 1: Create payment session
+      console.log('🚀 Starting payment flow...');
+
+      // Step 1: Create payment session and get UNSIGNED transaction
+      console.log('📝 Creating payment session...');
       const sessionResponse = await fetch('/api/payments/create-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -101,6 +116,7 @@ export default function ProductDetailPage() {
           metadata: {
             orderId: `ORD-${Date.now()}`,
             productName: product.name,
+            timestamp: new Date().toISOString(),
           },
         }),
       });
@@ -111,54 +127,153 @@ export default function ProductDetailPage() {
       }
 
       const sessionData = await sessionResponse.json();
-      console.log('Session created:', sessionData.session.id);
+      sessionId = sessionData.session.id;
+      console.log('✅ Session created:', sessionId);
 
-      // Step 2: Decode and sign transaction
+      // Step 2: Deserialize the UNSIGNED transaction
+      console.log('📦 Deserializing transaction...');
       const transactionBuffer = Buffer.from(sessionData.transaction, 'base64');
       const transaction = VersionedTransaction.deserialize(transactionBuffer);
-      const signedTransaction = await signTransaction(transaction);
+      
+      console.log('📝 Transaction info:');
+      console.log('  - Signature slots:', transaction.signatures.length);
+      console.log('  - Instructions:', transaction.message.compiledInstructions.length);
 
-      // Step 3: Send transaction to network
-      const connection = new Connection(
-        process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+      // Verify transaction is unsigned
+      const hasAnySignature = transaction.signatures.some(sig => 
+        sig.some(b => b !== 0)
+      );
+      
+      if (hasAnySignature) {
+        console.error('❌ Transaction already has signatures - this should not happen!');
+        throw new Error('Transaction already signed. Please refresh and try again.');
+      }
+
+      console.log('✅ Transaction is unsigned as expected');
+
+      // Step 3: Customer signs the ENTIRE transaction
+      console.log('🔐 Requesting customer signature...');
+      console.log('⏳ Please approve the transaction in your wallet...');
+      
+      // const signedTransaction = await signTransaction(transaction);
+      
+      // console.log('✅ Customer signed transaction');
+      // const signedCount = signedTransaction.signatures.filter(sig => 
+      //   sig.some(b => b !== 0)
+      // ).length;
+      // console.log('📝 Signed signatures:', signedCount, '/', signedTransaction.signatures.length);
+
+      // Step 4: Send transaction to network
+      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
+      console.log('🌐 Connecting to RPC:', rpcUrl);
+      
+      const connection = new Connection(rpcUrl, {
+        commitment: 'confirmed',
+        confirmTransactionInitialTimeout: 60000,
+      });
+
+      console.log('📡 Sending transaction to Solana network...');
+      
+      // Send with retry logic
+      let signature: string;
+      try {
+        signature = await sendTransaction(
+          transaction,
+          connection,
+          {
+            skipPreflight: false, // Enable preflight to catch errors early
+            preflightCommitment: 'confirmed',
+            maxRetries: 2, // Reduced retries to avoid duplicate processing
+          }
+        );
+        console.log('✅ Transaction sent successfully!');
+        console.log('📝 Signature:', signature);
+        setTxSignature(signature)
+      } catch (sendError: any) {
+        console.error('❌ Failed to send transaction:', sendError);
+        
+        // Check if it's a duplicate/already processed error
+        if (sendError.message?.includes('already been processed')) {
+          throw new Error('Transaction was already submitted. Please wait or refresh the page.');
+        }
+        
+        throw sendError;
+      }
+
+      console.log('✅ Transaction sent successfully!');
+      console.log('📝 Signature:', signature);
+      setTxSignature(signature);
+
+      // Step 5: Wait for confirmation
+      console.log('⏳ Waiting for transaction confirmation...');
+      
+      const confirmation = await connection.confirmTransaction(
+        signature,
         'confirmed'
       );
 
-      const signature = await connection.sendRawTransaction(
-        signedTransaction.serialize(),
-        {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        }
-      );
-
-      console.log('Transaction sent:', signature);
-      setTxSignature(signature);
-
-      // Step 4: Confirm payment
-      const confirmResponse = await fetch('/api/payments/confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId: sessionData.session.id,
-          txSignature: signature,
-        }),
-      });
-
-      if (!confirmResponse.ok) {
-        const errorData = await confirmResponse.json();
-        throw new Error(errorData.error || 'Payment confirmation failed');
+      if (confirmation.value.err) {
+        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
 
-      const confirmData = await confirmResponse.json();
-      console.log('Payment confirmed:', confirmData.payment);
+      console.log('✅ Transaction confirmed on-chain!');
+
+      // Step 6: Notify backend about successful payment
+      console.log('💾 Updating payment record on backend...');
+      
+      try {
+        const confirmResponse = await fetch('/api/payments/confirm', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId: sessionId,
+            txSignature: signature,
+          }),
+        });
+
+        if (!confirmResponse.ok) {
+          console.warn('⚠️  Backend confirmation failed, but transaction succeeded on-chain');
+          console.warn('Transaction signature:', signature);
+          // Don't throw - transaction succeeded on chain
+        } else {
+          const confirmData = await confirmResponse.json();
+          console.log('✅ Payment confirmed on backend:', confirmData.payment);
+        }
+      } catch (confirmError) {
+        console.warn('⚠️  Backend confirmation error:', confirmError);
+        // Don't throw - transaction succeeded on chain
+      }
 
       setSuccess(true);
     } catch (err: any) {
-      console.error('Purchase failed:', err);
-      setError(err.message || 'Payment failed. Please try again.');
+      console.error('❌ Purchase failed:', err);
+      
+      // Enhanced error logging
+      if (err.logs) {
+        console.error('📜 Transaction logs:', err.logs);
+      }
+      
+      // Provide user-friendly error messages
+      let errorMessage = 'Payment failed. Please try again.';
+      
+      if (err.message?.includes('User rejected') || err.message?.includes('rejected')) {
+        errorMessage = 'Transaction was cancelled.';
+      } else if (err.message?.includes('insufficient')) {
+        errorMessage = 'Insufficient balance in your wallet.';
+      } else if (err.message?.includes('blockhash') || err.message?.includes('expired')) {
+        errorMessage = 'Transaction expired. Please try again.';
+      } else if (err.message?.includes('already been processed')) {
+        errorMessage = 'Transaction was already submitted. Please check your transaction history.';
+      } else if (err.message?.includes('0x1')) {
+        errorMessage = 'Insufficient funds for transaction fee.';
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
     } finally {
       setProcessing(false);
+      purchaseInProgress.current = false;
     }
   };
 
@@ -213,7 +328,7 @@ export default function ProductDetailPage() {
                     href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-orange-600 hover:text-orange-700"
+                    className="text-orange-600 hover:text-orange-700 flex-shrink-0"
                   >
                     <ExternalLink className="h-4 w-4" />
                   </a>
@@ -241,6 +356,13 @@ export default function ProductDetailPage() {
               onClick={() => router.push('/products')}
             >
               Browse More
+            </Button>
+            <Button
+              variant="default"
+              className="flex-1"
+              onClick={() => window.location.reload()}
+            >
+              Buy Again
             </Button>
           </CardFooter>
         </Card>
@@ -347,6 +469,9 @@ export default function ProductDetailPage() {
                     ${totalPrice.toFixed(2)} USDC
                   </span>
                 </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  * Plus network fees (~$0.00005 SOL)
+                </p>
               </CardContent>
             </Card>
 
@@ -368,8 +493,8 @@ export default function ProductDetailPage() {
 
               <Button
                 onClick={handlePurchase}
-                disabled={!connected || processing || !product.isActive}
-                className="w-full bg-orange-600 hover:bg-orange-700 h-12 text-lg"
+                disabled={!connected || processing || !product.isActive || purchaseInProgress.current}
+                className="w-full bg-orange-600 hover:bg-orange-700 h-12 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {processing ? (
                   <>

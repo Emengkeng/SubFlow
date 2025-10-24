@@ -33,20 +33,27 @@ export class SanctumGatewayClient {
   }
 
   async getTipInstructions(feePayer: string): Promise<Instruction[]> {
+   // console.log("Fetching tip instructions from gateway...", feePayer);
+    const tipId = `tip-${Date.now()}`;
+    const dataToSend = {
+      id: tipId,
+      jsonrpc: "2.0",
+      method: "getTipInstructions",
+      params: [
+          {
+            feePayer: feePayer,
+            // jitoTipRange: CONFIG.JITO_TIP_RANGE,
+            // deliveryMethodType: "rpc",
+
+          },
+        ],
+    };
+    console.log("Fetching tip instructions from gateway...", feePayer);
+    console.log("Request payload:", dataToSend);
     const response = await fetch(this.gatewayUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: `tip-${Date.now()}`,
-        jsonrpc: "2.0",
-        method: "getTipInstructions",
-        params: [
-          {
-            feePayer,
-            jitoTipRange: CONFIG.JITO_TIP_RANGE,
-          },
-        ],
-      }),
+      body: JSON.stringify(dataToSend),
     });
 
     if (!response.ok) {
@@ -54,9 +61,11 @@ export class SanctumGatewayClient {
     }
 
     const data = await response.json();
+
+    console.log("Tip instructions data:", data);
     
     if (data.error) {
-      throw new Error(`Gateway error: ${data.error.message}`);
+      throw new Error(`Gateway error: ${JSON.stringify(data.error)}`);
     }
 
     return data.result.map((ix: any) => ({
@@ -65,13 +74,13 @@ export class SanctumGatewayClient {
     }));
   }
 
-  async sendTransaction(signedTransactionBytes: Uint8Array): Promise<{
+  async sendTransaction(signedTransactionBytes: string): Promise<{
     signature: string;
     deliveryMethod: string;
     slot?: number;
   }> {
     // Convert Uint8Array to base64 string
-    const base64Transaction = getBase64Decoder().decode(signedTransactionBytes);
+    const base64Transaction = getBase64Encoder().encode(signedTransactionBytes);
 
     const response = await fetch(this.gatewayUrl, {
       method: "POST",

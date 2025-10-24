@@ -54,13 +54,18 @@ export async function POST(request: NextRequest) {
       metadata,
     });
 
-    // Generate transaction for customer to sign
+    console.log('📝 Payment session created:', session.id);
+
+    // Generate unsigned transaction for customer to sign
     const executor = await PaymentExecutor.create();
+    
+    // Use the simplified executeDirectPayment (customer signs everything)
     const { payment } = await executor.executeDirectPayment(
       { ...session, product },
       customerWallet,
-      customerWallet // Token account - will be derived in executor
     );
+
+    console.log('✅ Transaction prepared for customer signature');
 
     return NextResponse.json({
       success: true,
@@ -75,10 +80,12 @@ export async function POST(request: NextRequest) {
         expiresAt: session.expiresAt,
         status: session.status,
       },
-      transaction: payment.transaction,
+      transaction: payment.transaction, // Unsigned transaction for customer
     });
   } catch (error: any) {
-    console.error('Create session error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('❌ Create session error:', error);
+    return NextResponse.json({ 
+      error: error.message || 'Failed to create payment session' 
+    }, { status: 500 });
   }
 }

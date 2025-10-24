@@ -6,7 +6,6 @@ import {
   pipe,
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
-  signTransaction,
   address,
 } from "@solana/kit";
 import {
@@ -14,10 +13,8 @@ import {
   getSetComputeUnitPriceInstruction,
 } from "@solana-program/compute-budget";
 import { 
-  getTransferCheckedInstruction, 
-  TOKEN_PROGRAM_ADDRESS 
+  getTransferCheckedInstruction,
 } from "@solana-program/token";
-import { createKeyPairSignerFromBytes } from "@solana/signers";
 import { SanctumGatewayClient } from "./sanctum-gateway";
 import {
   createPayment,
@@ -26,8 +23,9 @@ import {
   getPlatformConfig,
   addToDeadLetterQueue,
 } from "@/lib/db/payment-queries";
-import bs58 from "bs58";
 import { PaymentSession, Product } from "../db/schema";
+import { PublicKey } from "@solana/web3.js";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 export enum PaymentErrorType {
   NETWORK_ERROR = "NETWORK_ERROR",
@@ -37,41 +35,27 @@ export enum PaymentErrorType {
   UNKNOWN_ERROR = "UNKNOWN_ERROR",
 }
 
-// ============================================================================
-// PAYMENT EXECUTOR
-// ============================================================================
-
 export class PaymentExecutor {
   private gateway: SanctumGatewayClient;
-  private backendSigner!: Awaited<ReturnType<typeof createKeyPairSignerFromBytes>>;
-  private keyPair = process.env.BACKEND_KEYPAIR;
 
-  private constructor() {
+  constructor() {
     this.gateway = new SanctumGatewayClient();
-    if (!this.keyPair) {
-      throw Error("Backend keypair not set");
-    }
   }
 
   static async create(): Promise<PaymentExecutor> {
-    const executor = new PaymentExecutor();
-    const keypairBytes = bs58.decode(executor.keyPair!);
-    executor.backendSigner = await createKeyPairSignerFromBytes(keypairBytes);
-    return executor;
+    return new PaymentExecutor();
   }
 
   /**
    * Execute a direct transfer from customer to merchant + platform
-   * Customer pays everything (no delegation needed!)
+   * Customer signs and pays for everything (simple, reliable)
    */
   async executeDirectPayment(
     session: PaymentSession & { product: Product & { organization: any } },
-    customerWallet: string,
-    customerTokenAccount: string
+    customerWallet: string
   ): Promise<{ txSignature: string; payment: any }> {
     console.log(`💰 Executing payment for session ${session.id}`);
 
-    // Get platform config
     const platformConfig = await getPlatformConfig();
     if (!platformConfig) {
       throw new Error('Platform config not found');
@@ -79,87 +63,126 @@ export class PaymentExecutor {
 
     const merchantAmount = BigInt(session.amount);
     const platformFee = BigInt(session.platformFee);
-    const totalAmount = BigInt(session.totalAmount);
 
     try {
       const instructions: any[] = [];
       const tokenMintAddr = address(session.tokenMint);
       const customerWalletAddr = address(customerWallet);
-      const customerTokenAccountAddr = address(customerTokenAccount);
 
-      // 1. TRANSFER TO MERCHANT
+      // Derive token accounts
+      const customerTokenAccount = getAssociatedTokenAddressSync(
+        new PublicKey(session.tokenMint),
+        new PublicKey(customerWallet)
+      );
+      const merchantTokenAccount = getAssociatedTokenAddressSync(
+        new PublicKey(session.tokenMint),
+        new PublicKey(session.merchantWallet)
+      );
+      const platformTokenAccount = getAssociatedTokenAddressSync(
+        new PublicKey(session.tokenMint),
+        new PublicKey(platformConfig.platformFeeWallet)
+      );
+
+      console.log('🔍 Account Addresses:');
+      console.log('Customer wallet:', customerWallet);
+      console.log('Customer token account:', customerTokenAccount.toString());
+      console.log('Merchant token account:', merchantTokenAccount.toString());
+      console.log('Platform token account:', platformTokenAccount.toString());
+
+      // Get blockchain data - CUSTOMER pays for tips
+      // Always fetch fresh blockhash to avoid replay errors
+      console.log('🔄 Fetching fresh blockhash and blockchain data...');
+      
+      const [{ value: latestBlockhash }, priorityFee, tipIxs] = await Promise.all([
+        this.gateway.getLatestBlockhash(),
+        this.gateway.getPriorityFee([
+          customerTokenAccount.toString(),
+          merchantTokenAccount.toString(),
+          platformTokenAccount.toString(),
+        ]),
+        // CRITICAL: Pass CUSTOMER wallet as fee payer for tips
+        this.gateway.getTipInstructions(customerWallet),
+      ]);
+      
+      console.log('✅ Fresh blockhash obtained:', latestBlockhash.blockhash.slice(0, 8) + '...');
+
+      console.log('✅ Tip instructions fetched (customer will pay)');
+
+      // Build compute budget
+      const cuLimit = 300000;
+      const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
+      
+      // Add a tiny bit of randomness to CU price to make each transaction unique
+      // This prevents identical transactions with same blockhash
+      const randomness = BigInt(Math.floor(Math.random() * 10));
+      const uniqueCuPrice = cuPrice + randomness;
+      
+      const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
+      const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: uniqueCuPrice });
+      
+      console.log('⚙️  Compute units:', cuLimit, '| Price:', uniqueCuPrice.toString(), 'micro-lamports');
+
+      // Transfer to merchant
       const merchantTransferIx = getTransferCheckedInstruction({
-        source: customerTokenAccountAddr,
+        source: address(customerTokenAccount.toString()),
         mint: tokenMintAddr,
-        destination: address(session.merchantWallet),
+        destination: address(merchantTokenAccount.toString()),
         authority: customerWalletAddr,
         amount: merchantAmount,
         decimals: session.tokenDecimals,
       });
 
-      // 2. TRANSFER TO PLATFORM
+      // Transfer to platform
       const platformTransferIx = getTransferCheckedInstruction({
-        source: customerTokenAccountAddr,
+        source: address(customerTokenAccount.toString()),
         mint: tokenMintAddr,
-        destination: address(platformConfig.platformFeeWallet),
+        destination: address(platformTokenAccount.toString()),
         authority: customerWalletAddr,
         amount: platformFee,
         decimals: session.tokenDecimals,
       });
 
-      // 3. GET PRIORITY FEE AND TIP
-      const [{ value: latestBlockhash }, priorityFee, tipIxs] = await Promise.all([
-        this.gateway.getLatestBlockhash(),
-        this.gateway.getPriorityFee([
-          customerTokenAccount,
-          session.merchantWallet,
-          platformConfig.platformFeeWallet,
-        ]),
-        this.gateway.getTipInstructions(this.backendSigner.address),
-      ]);
+      // Add all instructions including tips
+      instructions.push(
+        cuLimitIx, 
+        cuPriceIx, 
+        merchantTransferIx, 
+        platformTransferIx, 
+        ...tipIxs
+      );
 
-      // 4. BUILD COMPUTE BUDGET
-      const cuLimit = 300000;
-      const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
-      const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
-      const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: cuPrice });
+      console.log(`📦 Built transaction with ${instructions.length} instructions`);
 
-      // Calculate total gas cost
-      const tipAmount = tipIxs.reduce((sum, ix) => sum + BigInt(5000), BigInt(0));
-      const totalGasCost = (cuPrice * BigInt(cuLimit) / BigInt(1000000)) + tipAmount;
-
-      // 5. ADD ALL INSTRUCTIONS
-      instructions.push(cuLimitIx, cuPriceIx, merchantTransferIx, platformTransferIx, ...tipIxs);
-
-      // 6. BUILD TRANSACTION (Customer is fee payer!)
-      const transaction = pipe(
+      // Build transaction with customer as ONLY signer
+      const customerSigner = { address: customerWalletAddr };
+      
+      const compiledTransaction = pipe(
         createTransactionMessage({ version: 0 }),
         (txm) => appendTransactionMessageInstructions(instructions, txm),
-        (txm) => setTransactionMessageFeePayerSigner(
-          { address: customerWalletAddr } as any,
-          txm
-        ),
+        (txm) => setTransactionMessageFeePayerSigner(customerSigner as any, txm),
         (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
         compileTransaction
       );
 
-      const readonlyBytes = getTransactionEncoder().encode(transaction);
-      const transactionBytes = new Uint8Array(readonlyBytes);
-
-      // This transaction will be returned to frontend for customer to sign
-      // For now, we'll just return the unsigned transaction
+      // Serialize for frontend (NO backend signature - customer signs everything)
+      const transactionBytes = getTransactionEncoder().encode(compiledTransaction);
       const base64Transaction = Buffer.from(transactionBytes).toString('base64');
 
+      console.log('✅ Transaction compiled successfully');
+      console.log('📊 Transaction size:', transactionBytes.length, 'bytes');
+      console.log('👤 Fee payer:', customerWallet);
+      console.log('✍️  Required signatures: 1 (customer only)');
+
       return {
-        txSignature: '', // Will be filled after customer signs
+        txSignature: '',
         payment: {
           sessionId: session.id,
           productId: session.productId,
           organizationId: session.organizationId,
           merchantAmount: merchantAmount.toString(),
           platformFee: platformFee.toString(),
-          totalAmount: totalAmount.toString(),
-          gasCost: totalGasCost.toString(),
+          totalAmount: session.totalAmount,
+          gasCost: '0',
           transaction: base64Transaction,
         },
       };
@@ -177,9 +200,6 @@ export class PaymentExecutor {
     }
   }
 
-  /**
-   * Confirm payment after customer signs and submits transaction
-   */
   async confirmPayment(
     sessionId: string,
     txSignature: string
@@ -187,20 +207,17 @@ export class PaymentExecutor {
     console.log(`✅ Confirming payment: ${txSignature}`);
 
     try {
-      // Wait for transaction confirmation
       const confirmed = await this.gateway.confirmTransaction(txSignature, 30);
 
       if (!confirmed) {
         throw new Error('Transaction confirmation timeout');
       }
 
-      // Get session details
       const session = await this.getSessionById(sessionId);
       if (!session) {
         throw new Error('Session not found');
       }
 
-      // Create payment record
       const payment = await createPayment({
         sessionId,
         productId: session.productId,
@@ -208,15 +225,13 @@ export class PaymentExecutor {
         merchantAmount: session.amount,
         platformFee: session.platformFee,
         totalAmount: session.totalAmount,
-        gasCost: '0', // Customer paid gas
+        gasCost: '0',
         txSignature,
         deliveryMethod: 'customer_signed',
       });
 
-      // Update payment status
       await updatePayment(payment.id, { status: 'confirmed' });
 
-      // Record platform revenue
       const platformConfig = await getPlatformConfig();
       if (platformConfig) {
         await createPlatformRevenue({
@@ -239,7 +254,6 @@ export class PaymentExecutor {
   }
 
   private async getSessionById(sessionId: string) {
-    // Import from queries
     const { getPaymentSessionById } = await import('@/lib/db/payment-queries');
     return await getPaymentSessionById(sessionId);
   }
