@@ -34,7 +34,7 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { orgId } = params;
+    const { orgId } = await params;
 
     // Verify user has access to this organization
     const hasAccess = await verifyOrgAccess(user.id, orgId);

@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       name,
       description,
       price,
-     // tokenMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+     // tokenMint = 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr',
       tokenDecimals = 6,
       merchantWallet,
       imageUrl,
