@@ -1,6 +1,6 @@
 import { desc, and, eq, isNull } from 'drizzle-orm';
 import { db } from './drizzle';
-import { activityLogs, teamMembers, teams, users } from './schema';
+import { activityLogs, teamMembers, teams, users, organizations } from './schema';
 import { cookies } from 'next/headers';
 import { verifyToken } from '@/lib/auth/session';
 
@@ -24,7 +24,12 @@ export async function getUser() {
   }
 
   const user = await db
-    .select()
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      role: users.role,
+    })
     .from(users)
     .where(and(eq(users.id, sessionData.user.id), isNull(users.deletedAt)))
     .limit(1);
@@ -78,6 +83,25 @@ export async function getUserWithTeam(userId: number) {
   return result[0];
 }
 
+export async function getUserWithTeamAndOrg(userId: number) {
+  const result = await db
+    .select({
+      user: users,
+      teamId: teamMembers.teamId,
+      teamRole: teamMembers.role,
+      team: teams,
+      organization: organizations
+    })
+    .from(users)
+    .leftJoin(teamMembers, eq(users.id, teamMembers.userId))
+    .leftJoin(teams, eq(teamMembers.teamId, teams.id))
+    .leftJoin(organizations, eq(teams.organizationId, organizations.id))
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  return result[0];
+}
+
 export async function getActivityLogs() {
   const user = await getUser();
   if (!user) {
@@ -110,6 +134,7 @@ export async function getTeamForUser() {
     with: {
       team: {
         with: {
+          organization: true,
           teamMembers: {
             with: {
               user: {
@@ -127,4 +152,31 @@ export async function getTeamForUser() {
   });
 
   return result?.team || null;
+}
+
+export async function getOrganizationTeams() {
+  const user = await getUser();
+  if (!user) {
+    return [];
+  }
+
+  const userTeam = await getUserWithTeamAndOrg(user.id);
+  if (!userTeam?.organization) {
+    return [];
+  }
+
+  return await db
+    .select()
+    .from(teams)
+    .where(eq(teams.organizationId, userTeam.organization.id));
+}
+
+export async function getUserOrganization() {
+  const user = await getUser();
+  if (!user) {
+    return null;
+  }
+
+  const userTeam = await getUserWithTeamAndOrg(user.id);
+  return userTeam?.organization || null;
 }
