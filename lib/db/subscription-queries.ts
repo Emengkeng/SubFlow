@@ -1,305 +1,18 @@
-import { desc, and, eq, lte, sql, inArray } from 'drizzle-orm';
-import { db } from './drizzle';
+import { desc, and, eq, lte, sql } from 'drizzle-orm';
+import { db } from '../db/drizzle';
 import {
-  organizations,
-  products,
-  paymentSessions,
-  payments,
-  webhooks,
-  deadLetterQueue,
-  platformConfig,
-  platformRevenue,
-  // NEW: Subscription tables
   subscriptionPlans,
   subscriptions,
   subscriptionPayments,
-  type Organization,
-  type Product,
-  type PaymentSession,
-  type Payment,
+  webhooks,
+  organizations,
   type Subscription,
   type SubscriptionPlan,
-} from './schema';
+  type NewWebhook,
+} from '../db/schema';
 
 // ============================================================================
-// EXISTING PRODUCT QUERIES (keep all your existing ones)
-// ============================================================================
-
-export async function getOrganizationByApiKey(apiKey: string) {
-  const result = await db
-    .select()
-    .from(organizations)
-    .where(and(eq(organizations.apiKey, apiKey), eq(organizations.isActive, true)))
-    .limit(1);
-
-  return result[0] || null;
-}
-
-export async function createOrganization(data: {
-  name: string;
-  email: string;
-  apiKey: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
-  website?: string;
-  logoUrl?: string;
-}) {
-  const result = await db
-    .insert(organizations)
-    .values(data)
-    .returning();
-
-  return result[0];
-}
-
-export async function getOrganizationById(orgId: string) {
-  const result = await db
-    .select()
-    .from(organizations)
-    .where(eq(organizations.id, orgId))
-    .limit(1);
-
-  return result[0] || null;
-}
-
-export async function createProduct(data: {
-  organizationId: string;
-  name: string;
-  description?: string;
-  price: string;
-  tokenMint: string;
-  tokenDecimals?: number;
-  merchantWallet: string;
-  imageUrl?: string;
-  metadata?: any;
-}) {
-  const result = await db
-    .insert(products)
-    .values({
-      ...data,
-      tokenDecimals: data.tokenDecimals || 6,
-    })
-    .returning();
-
-  return result[0];
-}
-
-export async function getProductById(productId: string) {
-  const result = await db.query.products.findFirst({
-    where: and(eq(products.id, productId), eq(products.isActive, true)),
-    with: {
-      organization: true,
-    },
-  });
-
-  return result || null;
-}
-
-export async function getProductsByOrganization(organizationId: string) {
-  return await db
-    .select()
-    .from(products)
-    .where(eq(products.organizationId, organizationId))
-    .orderBy(desc(products.createdAt));
-}
-
-export async function updateProduct(productId: string, data: Partial<Product>) {
-  const result = await db
-    .update(products)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(products.id, productId))
-    .returning();
-
-  return result[0];
-}
-
-export async function deleteProduct(productId: string) {
-  const result = await db
-    .update(products)
-    .set({ isActive: false, updatedAt: new Date() })
-    .where(eq(products.id, productId))
-    .returning();
-
-  return result[0];
-}
-
-export async function searchProducts(query: {
-  search?: string;
-  organizationId?: string;
-  minPrice?: string;
-  maxPrice?: string;
-  isActive?: boolean;
-}) {
-  let conditions = [];
-
-  if (query.organizationId) {
-    conditions.push(eq(products.organizationId, query.organizationId));
-  }
-
-  if (query.isActive !== undefined) {
-    conditions.push(eq(products.isActive, query.isActive));
-  }
-
-  if (query.minPrice) {
-    conditions.push(sql`${products.price} >= ${query.minPrice}`);
-  }
-
-  if (query.maxPrice) {
-    conditions.push(sql`${products.price} <= ${query.maxPrice}`);
-  }
-
-  if (query.search) {
-    conditions.push(
-      sql`(${products.name} ILIKE ${'%' + query.search + '%'} OR ${products.description} ILIKE ${'%' + query.search + '%'})`
-    );
-  }
-
-  return await db.query.products.findMany({
-    where: conditions.length > 0 ? and(...conditions) : undefined,
-    with: {
-      organization: {
-        columns: {
-          id: true,
-          name: true,
-          logoUrl: true,
-        },
-      },
-    },
-    orderBy: [desc(products.createdAt)],
-    limit: 50,
-  });
-}
-
-export async function createPaymentSession(data: {
-  productId: string;
-  organizationId: string;
-  customerWallet?: string;
-  customerEmail?: string;
-  amount: string;
-  platformFee: string;
-  totalAmount: string;
-  tokenMint: string;
-  tokenDecimals: number;
-  merchantWallet: string;
-  expiresAt: Date;
-  metadata?: any;
-  successUrl?: string;
-  cancelUrl?: string;
-}) {
-  const result = await db
-    .insert(paymentSessions)
-    .values(data)
-    .returning();
-
-  return result[0];
-}
-
-export async function getPaymentSessionById(sessionId: string) {
-  const result = await db.query.paymentSessions.findFirst({
-    where: eq(paymentSessions.id, sessionId),
-    with: {
-      product: {
-        with: {
-          organization: true,
-        },
-      },
-      payments: {
-        orderBy: [desc(payments.createdAt)],
-        limit: 1,
-      },
-    },
-  });
-
-  return result || null;
-}
-
-export async function updatePaymentSession(
-  sessionId: string,
-  data: Partial<PaymentSession>
-) {
-  const result = await db
-    .update(paymentSessions)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(paymentSessions.id, sessionId))
-    .returning();
-
-  return result[0];
-}
-
-export async function createPayment(data: {
-  sessionId: string;
-  productId: string;
-  organizationId: string;
-  merchantAmount: string;
-  platformFee: string;
-  totalAmount: string;
-  gasCost: string;
-  txSignature: string;
-  deliveryMethod?: string;
-  priorityFee?: string;
-  slotSent?: number;
-}) {
-  const result = await db
-    .insert(payments)
-    .values(data)
-    .returning();
-
-  return result[0];
-}
-
-export async function updatePayment(paymentId: string, data: Partial<Payment>) {
-  const result = await db
-    .update(payments)
-    .set({ ...data, updatedAt: new Date() })
-    .where(eq(payments.id, paymentId))
-    .returning();
-
-  return result[0];
-}
-
-export async function getPlatformConfig() {
-  const result = await db
-    .select()
-    .from(platformConfig)
-    .limit(1);
-
-  return result[0] || null;
-}
-
-export async function createPlatformRevenue(data: {
-  paymentId: string;
-  organizationId: string;
-  feeAmount: string;
-  merchantAmount: string;
-  totalAmount: string;
-  gasCost: string;
-  txSignature: string;
-}) {
-  const netRevenue = BigInt(data.feeAmount) - BigInt(data.gasCost);
-
-  const result = await db
-    .insert(platformRevenue)
-    .values({
-      ...data,
-      netRevenue: netRevenue.toString(),
-    })
-    .returning();
-
-  return result[0];
-}
-
-export async function addToDeadLetterQueue(data: {
-  paymentId?: string;
-  sessionId?: string;
-  errorType: string;
-  errorMessage: string;
-  metadata: any;
-}) {
-  await db.insert(deadLetterQueue).values(data);
-}
-
-// ============================================================================
-// NEW: SUBSCRIPTION PLAN QUERIES
+// SUBSCRIPTION PLAN QUERIES
 // ============================================================================
 
 export async function createSubscriptionPlan(data: {
@@ -399,7 +112,7 @@ export async function searchSubscriptionPlans(query: {
 }
 
 // ============================================================================
-// NEW: SUBSCRIPTION QUERIES
+// SUBSCRIPTION QUERIES
 // ============================================================================
 
 export async function createSubscription(data: {
@@ -528,7 +241,7 @@ export async function hasActiveSubscription(planId: string, userWallet: string) 
 }
 
 // ============================================================================
-// NEW: SUBSCRIPTION PAYMENT QUERIES
+// SUBSCRIPTION PAYMENT QUERIES
 // ============================================================================
 
 export async function createSubscriptionPayment(data: {
@@ -567,8 +280,27 @@ export async function getSubscriptionPayments(subscriptionId: string, limit = 50
     .limit(limit);
 }
 
+export async function getFailedSubscriptionPayments(limit = 100) {
+  return await db.query.subscriptionPayments.findMany({
+    where: eq(subscriptionPayments.status, 'failed'),
+    with: {
+      subscription: {
+        with: {
+          plan: {
+            with: {
+              organization: true,
+            },
+          },
+        },
+      },
+    },
+    limit,
+    orderBy: [desc(subscriptionPayments.updatedAt)],
+  });
+}
+
 // ============================================================================
-// NEW: SUBSCRIPTION ANALYTICS
+// ANALYTICS
 // ============================================================================
 
 export async function getSubscriptionStats(userWallet: string) {
@@ -626,7 +358,7 @@ export async function getUpcomingPayments(userWallet: string, days = 30) {
 }
 
 // ============================================================================
-// WEBHOOK QUERIES (for both products AND subscriptions)
+// WEBHOOK QUERIES
 // ============================================================================
 
 export async function createWebhook(data: {

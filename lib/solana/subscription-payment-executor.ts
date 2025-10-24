@@ -223,7 +223,7 @@ export class SubscriptionPaymentExecutor {
       await updateSubscription(subscription.id, {
         lastBillingDate: new Date(),
         nextBillingDate,
-        totalPayments: subscription.totalPayments + 1,
+        totalPayments: subscription.totalPayments! + 1,
         failedPayments: 0, // Reset failure counter
       });
 
@@ -238,7 +238,7 @@ export class SubscriptionPaymentExecutor {
           userWallet: subscription.userWallet,
           amount: subscription.amount,
           txSignature,
-          billingCycle: subscription.totalPayments + 1,
+          billingCycle: subscription.totalPayments! + 1,
         },
       });
 
@@ -253,11 +253,11 @@ export class SubscriptionPaymentExecutor {
       await updateSubscriptionPayment(payment.id, {
         status: 'failed',
         errorMessage: error.message,
-        retryCount: payment.retryCount + 1,
+        retryCount: payment.retryCount! + 1,
       });
 
       // Update subscription failure counter
-      const newFailedCount = subscription.failedPayments + 1;
+      const newFailedCount = subscription.failedPayments! + 1;
       const updates: any = {
         failedPayments: newFailedCount,
       };
