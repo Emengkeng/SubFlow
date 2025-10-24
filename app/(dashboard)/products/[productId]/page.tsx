@@ -154,14 +154,6 @@ export default function ProductDetailPage() {
       // Step 3: Customer signs the ENTIRE transaction
       console.log('🔐 Requesting customer signature...');
       console.log('⏳ Please approve the transaction in your wallet...');
-      
-      // const signedTransaction = await signTransaction(transaction);
-      
-      // console.log('✅ Customer signed transaction');
-      // const signedCount = signedTransaction.signatures.filter(sig => 
-      //   sig.some(b => b !== 0)
-      // ).length;
-      // console.log('📝 Signed signatures:', signedCount, '/', signedTransaction.signatures.length);
 
       // Step 4: Send transaction to network
       const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
