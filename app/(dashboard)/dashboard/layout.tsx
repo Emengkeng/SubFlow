@@ -75,7 +75,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const personalNavItems = [
     { href: '/dashboard', icon: Users, label: 'Team' },
     { href: '/dashboard/general', icon: Settings, label: 'General' },
-    { href: '/dashboard/subscriptions', icon: Calendar, label: 'My Subscriptions' },
+    // { href: '/dashboard/subscriptions', icon: Calendar, label: 'My Subscriptions' },
     { href: '/dashboard/activity', icon: Activity, label: 'Activity' },
     { href: '/dashboard/security', icon: Shield, label: 'Security' }
   ];
@@ -83,8 +83,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const orgNavItems = [
     { href: '/dashboard/org/overview', icon: BarChart3, label: 'Overview' },
     { href: '/dashboard/org/products', icon: CreditCard, label: 'Products' },
-    { href: '/dashboard/org/plans', icon: Calendar, label: 'Subscription Plans' },
-    { href: '/dashboard/org/subscribers', icon: Users, label: 'Subscribers' },
+    // { href: '/dashboard/org/plans', icon: Calendar, label: 'Subscription Plans' },
+    // { href: '/dashboard/org/subscribers', icon: Users, label: 'Subscribers' },
     { href: '/dashboard/org/payments', icon: DollarSign, label: 'Payments' },
     { href: '/dashboard/org/revenue', icon: TrendingUp, label: 'Revenue' },
     { href: '/dashboard/org/settings', icon: Settings, label: 'Org Settings' }

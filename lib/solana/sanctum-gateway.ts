@@ -3,6 +3,7 @@ import {
   address,
   type Instruction,
   signature,
+  getBase64EncodedWireTransaction,
 } from "@solana/kit";
 import { getBase64Encoder, getBase64Decoder } from "@solana/codecs-strings";
 
@@ -43,7 +44,7 @@ export class SanctumGatewayClient {
           {
             feePayer: feePayer,
             // jitoTipRange: CONFIG.JITO_TIP_RANGE,
-            // deliveryMethodType: "rpc",
+            deliveryMethodType: "rpc",
 
           },
         ],
@@ -74,23 +75,23 @@ export class SanctumGatewayClient {
     }));
   }
 
-  async sendTransaction(signedTransactionBytes: string): Promise<{
+  async sendTransaction(signedTransactionBytes: any): Promise<{
     signature: string;
     deliveryMethod: string;
     slot?: number;
   }> {
-    // Convert Uint8Array to base64 string
-    const base64Transaction = getBase64Encoder().encode(signedTransactionBytes);
+    const tipId = `tip-${Date.now()}`;
+    const dataToSend = {
+      id: tipId,
+      jsonrpc: "2.0",
+      method: "sendTransaction",
+      params: [getBase64EncodedWireTransaction(signedTransactionBytes)],
+    };
 
     const response = await fetch(this.gatewayUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: `send-${Date.now()}`,
-        jsonrpc: "2.0",
-        method: "sendTransaction",
-        params: [base64Transaction],
-      }),
+      body: JSON.stringify(dataToSend),
     });
 
     if (!response.ok) {
