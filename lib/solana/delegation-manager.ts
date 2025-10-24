@@ -20,6 +20,8 @@ import {
 import { getAddressDecoder } from "@solana/addresses";
 import { createKeyPairSignerFromBytes } from "@solana/signers";
 import bs58 from "bs58";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { PublicKey } from "@solana/web3.js";
 
 interface ApprovalRequest {
   userWallet: string;
@@ -101,11 +103,10 @@ export class DelegationManager {
     const userWallet = address(request.userWallet);
     const tokenMint = address(request.tokenMint);
     
-    const [userTokenAccount] = await findAssociatedTokenPda({
-      mint: tokenMint,
-      owner: userWallet,
-      tokenProgram: TOKEN_PROGRAM_ADDRESS,
-    });
+    const userTokenAccount = getAssociatedTokenAddressSync(
+      new PublicKey(tokenMint),
+      new PublicKey(userWallet),
+    );
 
     // CRITICAL FIX: Calculate total allowance (per-payment × max payments)
     const perPaymentAmount = BigInt(request.amount);
@@ -152,7 +153,7 @@ export class DelegationManager {
     console.log(`  - Decimals: ${decimals}`);
     
     const approvalIx = getApproveCheckedInstruction({
-      source: userTokenAccount,
+      source: address(userTokenAccount.toString()),
       mint: tokenMint,
       delegate: address(this.backendAuthority),
       owner: userWallet,
@@ -196,7 +197,7 @@ export class DelegationManager {
     return {
       approvalTransaction: getBase64EncodedWireTransaction(transaction),
       delegateAuthority: this.backendAuthority,
-      tokenAccount: userTokenAccount,
+      tokenAccount: userTokenAccount.toString(),
       totalAllowance: totalAllowance.toString(),
       perPaymentAmount: perPaymentAmount.toString(),
       expiryDate,

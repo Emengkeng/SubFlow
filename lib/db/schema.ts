@@ -13,7 +13,7 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
@@ -280,6 +280,117 @@ export const platformRevenue = pgTable('platform_revenue', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
 
+export const subscriptionPlans = pgTable('subscription_plans', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  
+  // Plan details
+  name: varchar('name', { length: 255 }).notNull(),
+  description: text('description'),
+  
+  // Billing
+  tokenMint: varchar('token_mint', { length: 44 }).notNull(),
+  amountPerBilling: numeric('amount_per_billing', { precision: 20, scale: 0 }).notNull(),
+  billingPeriodDays: integer('billing_period_days').notNull(),
+  tokenDecimals: integer('token_decimals').notNull().default(6),
+  merchantTokenAccount: varchar('merchant_token_account', { length: 44 }).notNull(),
+  
+  // Limits (optional)
+  maxPayments: integer('max_payments'), // null = unlimited
+  monthlySpendingCap: numeric('monthly_spending_cap', { precision: 20, scale: 0 }),
+  
+  // Metadata
+  imageUrl: text('image_url'),
+  metadata: jsonb('metadata'),
+  isActive: boolean('is_active').default(true),
+  
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  orgIdx: index('sub_plans_org_idx').on(table.organizationId),
+  activeIdx: index('sub_plans_active_idx').on(table.isActive),
+}));
+
+export const subscriptions = pgTable('subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  planId: uuid('plan_id')
+    .notNull()
+    .references(() => subscriptionPlans.id, { onDelete: 'cascade' }),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
+  
+  // User info
+  userWallet: varchar('user_wallet', { length: 44 }).notNull(),
+  userEmail: varchar('user_email', { length: 255 }),
+  userTokenAccount: varchar('user_token_account', { length: 44 }).notNull(),
+  
+  // Delegation info
+  delegateAuthority: varchar('delegate_authority', { length: 44 }).notNull(),
+  approvalTxSignature: varchar('approval_tx_signature', { length: 128 }),
+  delegationVerified: boolean('delegation_verified').default(false),
+  
+  // Billing
+  amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  platformFee: numeric('platform_fee', { precision: 20, scale: 0 }).notNull(),
+  totalAmount: numeric('total_amount', { precision: 20, scale: 0 }).notNull(),
+  nextBillingDate: timestamp('next_billing_date').notNull(),
+  lastBillingDate: timestamp('last_billing_date'),
+  
+  // Status
+  status: varchar('status', { length: 50 }).notNull().default('pending_approval'),
+  // Status values: pending_approval, active, paused, cancelled, expired
+  
+  // Counters
+  totalPayments: integer('total_payments').default(0),
+  failedPayments: integer('failed_payments').default(0),
+  
+  // Metadata
+  metadata: jsonb('metadata'),
+  
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  cancelledAt: timestamp('cancelled_at'),
+}, (table) => ({
+  userIdx: index('subscriptions_user_idx').on(table.userWallet),
+  planIdx: index('subscriptions_plan_idx').on(table.planId),
+  statusIdx: index('subscriptions_status_idx').on(table.status),
+  nextBillingIdx: index('subscriptions_next_billing_idx').on(table.nextBillingDate),
+  // Prevent duplicate active subscriptions
+  uniqueActiveSub: index('unique_active_sub').on(table.planId, table.userWallet, table.status)
+    .where(sql`status IN ('active', 'pending_approval')`),
+}));
+
+export const subscriptionPayments = pgTable('subscription_payments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  subscriptionId: uuid('subscription_id')
+    .notNull()
+    .references(() => subscriptions.id, { onDelete: 'cascade' }),
+  
+  // Payment details
+  amount: numeric('amount', { precision: 20, scale: 0 }).notNull(),
+  platformFee: numeric('platform_fee', { precision: 20, scale: 0 }).notNull(),
+  totalAmount: numeric('total_amount', { precision: 20, scale: 0 }).notNull(),
+  
+  // Transaction
+  txSignature: varchar('tx_signature', { length: 128 }).unique(),
+  status: varchar('status', { length: 50 }).notNull().default('pending'),
+  deliveryMethod: varchar('delivery_method', { length: 100 }),
+  
+  // Retry logic
+  retryCount: integer('retry_count').default(0),
+  errorMessage: text('error_message'),
+  
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  subIdx: index('sub_payments_subscription_idx').on(table.subscriptionId),
+  statusIdx: index('sub_payments_status_idx').on(table.status),
+  txIdx: index('sub_payments_tx_idx').on(table.txSignature),
+}));
+
 // ============================================================================
 // RELATIONS
 // ============================================================================
@@ -409,6 +520,33 @@ export const deadLetterQueueRelations = relations(deadLetterQueue, ({ one }) => 
   }),
 }));
 
+export const subscriptionPlansRelations = relations(subscriptionPlans, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [subscriptionPlans.organizationId],
+    references: [organizations.id],
+  }),
+  subscriptions: many(subscriptions),
+}));
+
+export const subscriptionsRelations = relations(subscriptions, ({ one, many }) => ({
+  plan: one(subscriptionPlans, {
+    fields: [subscriptions.planId],
+    references: [subscriptionPlans.id],
+  }),
+  organization: one(organizations, {
+    fields: [subscriptions.organizationId],
+    references: [organizations.id],
+  }),
+  payments: many(subscriptionPayments),
+}));
+
+export const subscriptionPaymentsRelations = relations(subscriptionPayments, ({ one }) => ({
+  subscription: one(subscriptions, {
+    fields: [subscriptionPayments.subscriptionId],
+    references: [subscriptions.id],
+  }),
+}));
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -444,6 +582,12 @@ export type NewPayment = typeof payments.$inferInsert;
 export type Webhook = typeof webhooks.$inferSelect;
 export type PlatformConfig = typeof platformConfig.$inferSelect;
 export type PlatformRevenue = typeof platformRevenue.$inferSelect;
+export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
+export type NewSubscriptionPlan = typeof subscriptionPlans.$inferInsert;
+export type Subscription = typeof subscriptions.$inferSelect;
+export type NewSubscription = typeof subscriptions.$inferInsert;
+export type SubscriptionPayment = typeof subscriptionPayments.$inferSelect;
+export type NewSubscriptionPayment = typeof subscriptionPayments.$inferInsert;
 
 export enum SubscriptionStatus {
   PENDING_APPROVAL = 'pending_approval',

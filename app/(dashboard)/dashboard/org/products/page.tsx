@@ -93,7 +93,7 @@ export default function OrgProductsPage() {
           name: formData.get('name'),
           description: formData.get('description'),
           price: priceInSmallestUnit,
-          tokenMint: formData.get('tokenMint') || 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+          tokenMint: formData.get('tokenMint') || 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr',
           tokenDecimals: 6,
           merchantWallet: formData.get('merchantWallet'),
           imageUrl: formData.get('imageUrl'),
@@ -305,7 +305,7 @@ export default function OrgProductsPage() {
                 <Input
                   id="tokenMint"
                   name="tokenMint"
-                  defaultValue="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                  defaultValue="Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr"
                 />
                 <p className="text-xs text-gray-500 mt-1">
                   USDC by default (recommended)

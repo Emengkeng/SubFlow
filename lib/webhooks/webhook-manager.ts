@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { createWebhook, getPendingWebhooks } from '@/lib/db/subscription-queries';
+import { createWebhook, getPendingWebhooks } from '@/lib/db/payment-queries';
 import { db } from '@/lib/db/drizzle';
 import { webhooks } from '@/lib/db/schema';
 import { eq } from 'drizzle-orm';
@@ -150,24 +150,17 @@ export class WebhookManager {
     successful: number;
     failed: number;
   }> {
-    const pendingWebhooks = await db.query.webhooks.findMany({
-      where: eq(webhooks.status, 'pending'),
-      with: {
-        organization: true,
-      },
-      limit: 50,
-      orderBy: [webhooks.createdAt],
-    });
+    const pendingWebhooks = await getPendingWebhooks(50);
 
     let successful = 0;
     let failed = 0;
 
-    if (!pendingWebhooks){
-        return {
-            processed: 0,
-            successful,
-            failed,
-        };
+    if (!pendingWebhooks || pendingWebhooks.length === 0) {
+      return {
+        processed: 0,
+        successful,
+        failed,
+      };
     }
 
     for (const webhook of pendingWebhooks) {
@@ -219,14 +212,14 @@ export async function sendSubscriptionCreatedWebhook(
       userWallet: subscription.userWallet,
       planId: subscription.planId,
       status: subscription.status,
-      amount: subscription.amountPerBilling,
+      amount: subscription.amount,
       nextBillingDate: subscription.nextBillingDate,
     },
   });
 }
 
 /**
- * Sends payment.succeeded webhook
+ * Sends payment.succeeded webhook (for subscriptions)
  */
 export async function sendPaymentSucceededWebhook(
   organizationId: string,
