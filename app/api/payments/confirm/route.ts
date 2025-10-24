@@ -1,8 +1,3 @@
-// ============================================================================
-// app/api/payments/confirm/route.ts (UPDATED)
-// Confirm payment and create purchase record
-// ============================================================================
-
 import { NextRequest, NextResponse } from 'next/server';
 import { 
   createPurchase, 

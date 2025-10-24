@@ -1010,7 +1010,7 @@ export async function createPurchase(data: {
   paymentId: string;
   organizationId: string;
   customerWallet: string;
-  customerEmail?: string;
+  customerEmail: string | null;
   pricePaid: string;
   txSignature: string;
   maxDownloads: number;
