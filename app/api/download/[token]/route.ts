@@ -1,7 +1,3 @@
-// ============================================================================
-// app/api/download/[token]/route.ts
-// Serve the actual file download
-// ============================================================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { 

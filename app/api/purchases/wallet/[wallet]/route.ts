@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getPurchasesByWallet } from '@/lib/db/payment-queries';
 
@@ -30,7 +29,7 @@ export async function GET(
         maxDownloads: purchase.maxDownloads,
         lastDownloadAt: purchase.lastDownloadAt,
         createdAt: purchase.createdAt,
-        canDownload: purchase.downloadCount! < purchase.maxDownloads,
+        canDownload: purchase.downloadCount < purchase.maxDownloads,
       })),
     });
   } catch (error: any) {

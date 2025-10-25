@@ -43,10 +43,24 @@ export default function OrgProductsPage() {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [uploadingFile, setUploadingFile] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string }>>([]);
 
   useEffect(() => {
     fetchProducts();
+    fetchCategories();
   }, []);
+
+  const fetchCategories = async () => {
+    try {
+      const response = await fetch('/api/public/categories');
+      if (response.ok) {
+        const data = await response.json();
+        setCategories(data.categories || []);
+      }
+    } catch (error) {
+      console.error('Failed to fetch categories:', error);
+    }
+  };
 
   const fetchProducts = async () => {
     try {
