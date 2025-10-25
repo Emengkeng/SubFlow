@@ -1501,7 +1501,6 @@ export async function getAllCategoriesWithProductCounts() {
   }));
 }
 
-// Get products by category
 export async function getProductsByCategory(
   categorySlugOrId: string,
   limit = 50
@@ -1530,4 +1529,72 @@ export async function getProductsByCategory(
     orderBy: [desc(products.purchaseCount), desc(products.createdAt)],
     limit,
   });
+}
+
+/**
+ * Get product by slug (works with unique slugs like "react-course-a3f9k2")
+ */
+export async function getProductBySlug(slug: string) {
+  const result = await db.query.products.findFirst({
+    where: and(eq(products.slug, slug), eq(products.isActive, true)),
+    with: {
+      organization: true,
+      category: true,
+    },
+  });
+
+  return result || null;
+}
+
+/**
+ * Get product by ID or slug (tries both)
+ */
+export async function getProductByIdOrSlug(identifier: string) {
+  // Try by ID first (UUID format)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  if (uuidRegex.test(identifier)) {
+    const product = await getProductById(identifier);
+    if (product) return product;
+  }
+  
+  // Try by slug
+  return await getProductBySlug(identifier);
+}
+
+/**
+ * Check if a slug already exists
+ */
+export async function slugExists(slug: string): Promise<boolean> {
+  const result = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(eq(products.slug, slug))
+    .limit(1);
+
+  return result.length > 0;
+}
+
+/**
+ * Generate a guaranteed unique slug
+ */
+export async function generateUniqueProductSlug(baseName: string): Promise<string> {
+  const { generateUniqueSlug } = await import('@/lib/utils/slug');
+  
+  let attempts = 0;
+  const maxAttempts = 10;
+  
+  while (attempts < maxAttempts) {
+    const slug = generateUniqueSlug(baseName, 6);
+    const exists = await slugExists(slug);
+    
+    if (!exists) {
+      return slug;
+    }
+    
+    attempts++;
+  }
+  
+  // Fallback: use longer suffix
+  return generateUniqueSlug(baseName, 8);
 }

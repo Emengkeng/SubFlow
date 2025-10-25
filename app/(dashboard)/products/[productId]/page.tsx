@@ -1,6 +1,3 @@
-// app/products/[productId]/page.tsx
-// Updated to show if user already owns the product
-
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
@@ -15,12 +12,13 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { 
   Package, ShoppingBag, CheckCircle, AlertCircle, 
-  Loader2, ArrowLeft, ExternalLink, Download, FileText 
+  Loader2, ArrowLeft, ExternalLink, Download, FileText, Share2 
 } from 'lucide-react';
 import Image from 'next/image';
 
 type Product = {
   id: string;
+  slug: string;
   name: string;
   description: string | null;
   price: string;
@@ -40,6 +38,11 @@ type Product = {
     logoUrl: string | null;
     website: string | null;
   };
+  category?: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
 };
 
 type Purchase = {
@@ -63,15 +66,16 @@ export default function ProductDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [txSignature, setTxSignature] = useState<string | null>(null);
+  const [shareTooltip, setShareTooltip] = useState(false);
 
   const purchaseInProgress = useRef(false);
-  const productId = params.productId as string;
+  const productIdentifier = params.productId as string; // Can be slug or ID
 
   useEffect(() => {
-    if (productId) {
+    if (productIdentifier) {
       fetchProduct();
     }
-  }, [productId]);
+  }, [productIdentifier]);
 
   useEffect(() => {
     if (connected && publicKey && product) {
@@ -82,7 +86,8 @@ export default function ProductDetailPage() {
   const fetchProduct = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`/api/products/${productId}`);
+      // API endpoint handles both slug and ID
+      const response = await fetch(`/api/products/${productIdentifier}`);
       
       if (!response.ok) {
         throw new Error('Product not found');
@@ -90,6 +95,15 @@ export default function ProductDetailPage() {
 
       const data = await response.json();
       setProduct(data.product);
+      
+      // Update URL to use slug if we fetched by ID
+      if (data.product.slug && productIdentifier !== data.product.slug) {
+        window.history.replaceState(
+          null,
+          '',
+          `/products/${data.product.slug}`
+        );
+      }
     } catch (err: any) {
       console.error('Fetch product error:', err);
       setError(err.message || 'Failed to load product');
@@ -99,14 +113,14 @@ export default function ProductDetailPage() {
   };
 
   const checkPurchaseStatus = async () => {
-    if (!publicKey) return;
+    if (!publicKey || !product) return;
 
     try {
       const response = await fetch(`/api/purchases/wallet/${publicKey.toString()}`);
       if (response.ok) {
         const data = await response.json();
         const existingPurchase = data.purchases.find(
-          (p: any) => p.product.id === productId
+          (p: any) => p.product.id === product.id
         );
         
         if (existingPurchase) {
@@ -138,7 +152,6 @@ export default function ProductDetailPage() {
     try {
       console.log('🚀 Starting purchase flow...');
 
-      // Create payment session
       const sessionResponse = await fetch('/api/payments/create-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -148,6 +161,7 @@ export default function ProductDetailPage() {
           metadata: {
             orderId: `ORD-${Date.now()}`,
             productName: product.name,
+            productSlug: product.slug,
             timestamp: new Date().toISOString(),
           },
         }),
@@ -161,11 +175,9 @@ export default function ProductDetailPage() {
       const sessionData = await sessionResponse.json();
       sessionId = sessionData.session.id;
 
-      // Deserialize transaction
       const transactionBuffer = Buffer.from(sessionData.transaction, 'base64');
       const transaction = VersionedTransaction.deserialize(transactionBuffer);
 
-      // Send transaction
       const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
       const connection = new Connection(rpcUrl, {
         commitment: 'confirmed',
@@ -180,14 +192,12 @@ export default function ProductDetailPage() {
 
       setTxSignature(signature);
 
-      // Wait for confirmation
       const confirmation = await connection.confirmTransaction(signature, 'confirmed');
 
       if (confirmation.value.err) {
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
 
-      // Confirm with backend
       const confirmResponse = await fetch('/api/payments/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -224,6 +234,29 @@ export default function ProductDetailPage() {
 
   const handleDownload = () => {
     router.push('/purchases');
+  };
+
+  const handleShare = async () => {
+    if (!product) return;
+    
+    const url = `${window.location.origin}/products/${product.slug}`;
+    
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: product.name,
+          text: product.description || `Check out ${product.name}`,
+          url: url,
+        });
+      } catch (err) {
+        console.log('Share cancelled');
+      }
+    } else {
+      // Fallback: copy to clipboard
+      await navigator.clipboard.writeText(url);
+      setShareTooltip(true);
+      setTimeout(() => setShareTooltip(false), 2000);
+    }
   };
 
   const formatFileSize = (bytes?: number) => {
@@ -321,14 +354,31 @@ export default function ProductDetailPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <Button
-          variant="ghost"
-          onClick={() => router.push('/products')}
-          className="mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Products
-        </Button>
+        <div className="flex items-center justify-between mb-6">
+          <Button
+            variant="ghost"
+            onClick={() => router.push('/products')}
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Products
+          </Button>
+          
+          <div className="relative">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleShare}
+            >
+              <Share2 className="h-4 w-4 mr-2" />
+              Share
+            </Button>
+            {shareTooltip && (
+              <div className="absolute top-full right-0 mt-2 px-3 py-1 bg-gray-900 text-white text-xs rounded shadow-lg whitespace-nowrap">
+                Link copied!
+              </div>
+            )}
+          </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Product Image */}
@@ -384,6 +434,9 @@ export default function ProductDetailPage() {
               <div className="flex gap-2 flex-wrap mb-4">
                 {!product.isActive && (
                   <Badge variant="secondary">Currently Unavailable</Badge>
+                )}
+                {product.category && (
+                  <Badge variant="outline">{product.category.name}</Badge>
                 )}
                 {product.fileType && (
                   <Badge variant="outline" className="uppercase">

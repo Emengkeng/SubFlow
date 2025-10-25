@@ -8,6 +8,7 @@ import { db } from '@/lib/db/drizzle';
 import { teamMembers, teams } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getUser } from '@/lib/db/queries';
+import { generateUniqueSlug } from '@/lib/utils/slug';
 
 async function verifyOrgAccess(userId: number, orgId: string) {
   const access = await db
@@ -23,14 +24,6 @@ async function verifyOrgAccess(userId: number, orgId: string) {
     .limit(1);
 
   return access.length > 0;
-}
-
-// Helper function to generate URL-friendly slug
-function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
 }
 
 export async function GET(
@@ -105,17 +98,14 @@ export async function POST(
       previewUrl,
       thumbnailUrl,
       metadata,
-      // Digital product fields
       productType = 'digital',
       downloadLimit = 5,
       linkExpiryHours = 24,
-      // Discovery fields
       categoryId,
       tags = [],
       isFeatured = false,
     } = body;
 
-    // Validation
     if (!name || !price || !merchantWallet) {
       return NextResponse.json(
         { error: 'Missing required fields: name, price, merchantWallet' },
@@ -123,28 +113,24 @@ export async function POST(
       );
     }
 
-    // Generate slug if not provided
-    const productSlug = slug || generateSlug(name);
+    const productSlug = slug || generateUniqueSlug(name, 6);
 
-    // Create product with all fields
     const product = await createProduct({
       organizationId: orgId,
       name,
       slug: productSlug,
       description,
       price,
-      tokenMint: tokenMint || 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr', // USDC
+      tokenMint: 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr',
       tokenDecimals,
       merchantWallet,
       imageUrl,
       previewUrl,
       thumbnailUrl,
       metadata,
-      // Digital product specifics
       productType,
       downloadLimit,
       linkExpiryHours,
-      // Discovery
       categoryId,
       tags,
       isFeatured,
