@@ -1,3 +1,6 @@
+// app/products/[productId]/page.tsx
+// Updated to show if user already owns the product
+
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
@@ -12,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { 
   Package, ShoppingBag, CheckCircle, AlertCircle, 
-  Loader2, ArrowLeft, ExternalLink 
+  Loader2, ArrowLeft, ExternalLink, Download, FileText 
 } from 'lucide-react';
 import Image from 'next/image';
 
@@ -26,6 +29,10 @@ type Product = {
   tokenMint: string;
   tokenDecimals: number;
   merchantWallet: string;
+  fileType?: string;
+  fileSize?: number;
+  downloadLimit: number;
+  linkExpiryHours: number;
   isActive: boolean;
   organization: {
     id: string;
@@ -35,7 +42,14 @@ type Product = {
   };
 };
 
-const PLATFORM_FEE = 1.0; // $1 platform fee
+type Purchase = {
+  id: string;
+  downloadCount: number;
+  maxDownloads: number;
+  canDownload: boolean;
+};
+
+const PLATFORM_FEE = 1.0;
 
 export default function ProductDetailPage() {
   const params = useParams();
@@ -43,15 +57,14 @@ export default function ProductDetailPage() {
   const { publicKey, signTransaction, connected, sendTransaction } = useWallet();
   
   const [product, setProduct] = useState<Product | null>(null);
+  const [purchase, setPurchase] = useState<Purchase | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [txSignature, setTxSignature] = useState<string | null>(null);
 
-  // Prevent double-click purchases
   const purchaseInProgress = useRef(false);
-
   const productId = params.productId as string;
 
   useEffect(() => {
@@ -59,6 +72,12 @@ export default function ProductDetailPage() {
       fetchProduct();
     }
   }, [productId]);
+
+  useEffect(() => {
+    if (connected && publicKey && product) {
+      checkPurchaseStatus();
+    }
+  }, [connected, publicKey, product]);
 
   const fetchProduct = async () => {
     try {
@@ -79,18 +98,32 @@ export default function ProductDetailPage() {
     }
   };
 
-  const handlePurchase = async () => {
-    // Prevent double-clicks
-    if (purchaseInProgress.current) {
-      console.log('⚠️  Purchase already in progress, ignoring click');
-      return;
-    }
+  const checkPurchaseStatus = async () => {
+    if (!publicKey) return;
 
+    try {
+      const response = await fetch(`/api/purchases/wallet/${publicKey.toString()}`);
+      if (response.ok) {
+        const data = await response.json();
+        const existingPurchase = data.purchases.find(
+          (p: any) => p.product.id === productId
+        );
+        
+        if (existingPurchase) {
+          setPurchase(existingPurchase);
+        }
+      }
+    } catch (err) {
+      console.error('Check purchase status error:', err);
+    }
+  };
+
+  const handlePurchase = async () => {
+    if (purchaseInProgress.current) return;
     if (!connected || !publicKey || !signTransaction) {
       setError('Please connect your wallet first');
       return;
     }
-
     if (!product?.isActive) {
       setError('This product is currently unavailable');
       return;
@@ -103,10 +136,9 @@ export default function ProductDetailPage() {
     let sessionId: string | null = null;
 
     try {
-      console.log('🚀 Starting payment flow...');
+      console.log('🚀 Starting purchase flow...');
 
-      // Step 1: Create payment session and get UNSIGNED transaction
-      console.log('📝 Creating payment session...');
+      // Create payment session
       const sessionResponse = await fetch('/api/payments/create-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -128,136 +160,57 @@ export default function ProductDetailPage() {
 
       const sessionData = await sessionResponse.json();
       sessionId = sessionData.session.id;
-      console.log('✅ Session created:', sessionId);
 
-      // Step 2: Deserialize the UNSIGNED transaction
-      console.log('📦 Deserializing transaction...');
+      // Deserialize transaction
       const transactionBuffer = Buffer.from(sessionData.transaction, 'base64');
       const transaction = VersionedTransaction.deserialize(transactionBuffer);
-      
-      console.log('📝 Transaction info:');
-      console.log('  - Signature slots:', transaction.signatures.length);
-      console.log('  - Instructions:', transaction.message.compiledInstructions.length);
 
-      // Verify transaction is unsigned
-      const hasAnySignature = transaction.signatures.some(sig => 
-        sig.some(b => b !== 0)
-      );
-      
-      if (hasAnySignature) {
-        console.error('❌ Transaction already has signatures - this should not happen!');
-        throw new Error('Transaction already signed. Please refresh and try again.');
-      }
-
-      console.log('✅ Transaction is unsigned as expected');
-
-      // Step 3: Customer signs the ENTIRE transaction
-      console.log('🔐 Requesting customer signature...');
-      console.log('⏳ Please approve the transaction in your wallet...');
-
-      // Step 4: Send transaction to network
+      // Send transaction
       const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
-      console.log('🌐 Connecting to RPC:', rpcUrl);
-      
       const connection = new Connection(rpcUrl, {
         commitment: 'confirmed',
         confirmTransactionInitialTimeout: 60000,
       });
 
-      console.log('📡 Sending transaction to Solana network...');
-      
-      // Send with retry logic
-      let signature: string;
-      try {
-        signature = await sendTransaction(
-          transaction,
-          connection,
-          {
-            skipPreflight: false, // Enable preflight to catch errors early
-            preflightCommitment: 'confirmed',
-            maxRetries: 2, // Reduced retries to avoid duplicate processing
-          }
-        );
-        console.log('✅ Transaction sent successfully!');
-        console.log('📝 Signature:', signature);
-        setTxSignature(signature)
-      } catch (sendError: any) {
-        console.error('❌ Failed to send transaction:', sendError);
-        
-        // Check if it's a duplicate/already processed error
-        if (sendError.message?.includes('already been processed')) {
-          throw new Error('Transaction was already submitted. Please wait or refresh the page.');
-        }
-        
-        throw sendError;
-      }
+      const signature = await sendTransaction(transaction, connection, {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed',
+        maxRetries: 2,
+      });
 
-      console.log('✅ Transaction sent successfully!');
-      console.log('📝 Signature:', signature);
       setTxSignature(signature);
 
-      // Step 5: Wait for confirmation
-      console.log('⏳ Waiting for transaction confirmation...');
-      
-      const confirmation = await connection.confirmTransaction(
-        signature,
-        'confirmed'
-      );
+      // Wait for confirmation
+      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
 
       if (confirmation.value.err) {
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
 
-      console.log('✅ Transaction confirmed on-chain!');
+      // Confirm with backend
+      const confirmResponse = await fetch('/api/payments/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sessionId,
+          txSignature: signature,
+        }),
+      });
 
-      // Step 6: Notify backend about successful payment
-      console.log('💾 Updating payment record on backend...');
-      
-      try {
-        const confirmResponse = await fetch('/api/payments/confirm', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: sessionId,
-            txSignature: signature,
-          }),
-        });
-
-        if (!confirmResponse.ok) {
-          console.warn('⚠️  Backend confirmation failed, but transaction succeeded on-chain');
-          console.warn('Transaction signature:', signature);
-          // Don't throw - transaction succeeded on chain
-        } else {
-          const confirmData = await confirmResponse.json();
-          console.log('✅ Payment confirmed on backend:', confirmData.payment);
-        }
-      } catch (confirmError) {
-        console.warn('⚠️  Backend confirmation error:', confirmError);
-        // Don't throw - transaction succeeded on chain
+      if (confirmResponse.ok) {
+        const confirmData = await confirmResponse.json();
+        setPurchase(confirmData.purchase);
       }
 
       setSuccess(true);
     } catch (err: any) {
       console.error('❌ Purchase failed:', err);
       
-      // Enhanced error logging
-      if (err.logs) {
-        console.error('📜 Transaction logs:', err.logs);
-      }
-      
-      // Provide user-friendly error messages
       let errorMessage = 'Payment failed. Please try again.';
-      
       if (err.message?.includes('User rejected') || err.message?.includes('rejected')) {
         errorMessage = 'Transaction was cancelled.';
       } else if (err.message?.includes('insufficient')) {
         errorMessage = 'Insufficient balance in your wallet.';
-      } else if (err.message?.includes('blockhash') || err.message?.includes('expired')) {
-        errorMessage = 'Transaction expired. Please try again.';
-      } else if (err.message?.includes('already been processed')) {
-        errorMessage = 'Transaction was already submitted. Please check your transaction history.';
-      } else if (err.message?.includes('0x1')) {
-        errorMessage = 'Insufficient funds for transaction fee.';
       } else if (err.message) {
         errorMessage = err.message;
       }
@@ -267,6 +220,17 @@ export default function ProductDetailPage() {
       setProcessing(false);
       purchaseInProgress.current = false;
     }
+  };
+
+  const handleDownload = () => {
+    router.push('/purchases');
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return null;
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+    if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
   };
 
   if (loading) {
@@ -282,7 +246,6 @@ export default function ProductDetailPage() {
       <div className="flex flex-col items-center justify-center min-h-screen p-4">
         <AlertCircle className="h-16 w-16 text-gray-400 mb-4" />
         <h2 className="text-2xl font-bold text-gray-900 mb-2">Product Not Found</h2>
-        <p className="text-gray-600 mb-6">The product you're looking for doesn't exist.</p>
         <Button onClick={() => router.push('/products')}>
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Products
@@ -294,7 +257,7 @@ export default function ProductDetailPage() {
   const productPrice = parseFloat(product.displayPrice.replace('$', ''));
   const totalPrice = productPrice + PLATFORM_FEE;
 
-  if (success) {
+  if (success && purchase) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <Card className="max-w-md w-full">
@@ -302,59 +265,52 @@ export default function ProductDetailPage() {
             <div className="mx-auto mb-4 h-16 w-16 bg-green-100 rounded-full flex items-center justify-center">
               <CheckCircle className="h-10 w-10 text-green-600" />
             </div>
-            <CardTitle className="text-2xl">Payment Successful! 🎉</CardTitle>
+            <CardTitle className="text-2xl">Purchase Successful! 🎉</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-center text-gray-600">
-              Your payment has been confirmed on the Solana blockchain.
+              Your purchase has been confirmed. You can now download your product.
             </p>
             
-            {txSignature && (
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <p className="text-sm font-medium text-gray-700 mb-2">Transaction Signature:</p>
-                <div className="flex items-center gap-2">
-                  <code className="text-xs text-gray-600 break-all flex-1">
-                    {txSignature}
-                  </code>
-                  <a
-                    href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-orange-600 hover:text-orange-700 flex-shrink-0"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
-                </div>
-              </div>
-            )}
-
-            <Separator />
-
-            <div className="space-y-2">
+            <div className="bg-gray-50 p-4 rounded-lg space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="text-gray-600">Product:</span>
                 <span className="font-medium">{product.name}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Amount Paid:</span>
-                <span className="font-medium">${totalPrice.toFixed(2)} USDC</span>
+                <span className="text-gray-600">Downloads Available:</span>
+                <span className="font-medium">
+                  {purchase.downloadCount} / {purchase.maxDownloads}
+                </span>
               </div>
+              {product.linkExpiryHours && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">Link Expires After:</span>
+                  <span className="font-medium">{product.linkExpiryHours}h</span>
+                </div>
+              )}
             </div>
+
+            {txSignature && (
+              <a
+                href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 text-sm text-orange-600 hover:text-orange-700"
+              >
+                View Transaction
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
           </CardContent>
           <CardFooter className="flex gap-2">
             <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => router.push('/products')}
-            >
-              Browse More
-            </Button>
-            <Button
               variant="default"
-              className="flex-1"
-              onClick={() => window.location.reload()}
+              className="flex-1 bg-orange-600 hover:bg-orange-700"
+              onClick={handleDownload}
             >
-              Buy Again
+              <Download className="h-4 w-4 mr-2" />
+              Download Now
             </Button>
           </CardFooter>
         </Card>
@@ -387,7 +343,7 @@ export default function ProductDetailPage() {
                 />
               </div>
             ) : (
-              <Package className="h-48 w-48 text-gray-300" />
+              <FileText className="h-48 w-48 text-gray-300" />
             )}
           </div>
 
@@ -425,11 +381,22 @@ export default function ProductDetailPage() {
                 {product.name}
               </h1>
 
-              {!product.isActive && (
-                <Badge variant="secondary" className="mb-4">
-                  Currently Unavailable
-                </Badge>
-              )}
+              <div className="flex gap-2 flex-wrap mb-4">
+                {!product.isActive && (
+                  <Badge variant="secondary">Currently Unavailable</Badge>
+                )}
+                {product.fileType && (
+                  <Badge variant="outline" className="uppercase">
+                    {product.fileType}
+                  </Badge>
+                )}
+                {purchase && (
+                  <Badge className="bg-green-100 text-green-800">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    Owned
+                  </Badge>
+                )}
+              </div>
 
               {product.description && (
                 <p className="text-gray-600 leading-relaxed">
@@ -440,32 +407,67 @@ export default function ProductDetailPage() {
 
             <Separator />
 
-            {/* Pricing Card */}
+            {/* Product Info */}
             <Card>
               <CardHeader>
-                <CardTitle>Price Breakdown</CardTitle>
+                <CardTitle>Product Information</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                {product.fileSize && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">File Size:</span>
+                    <span className="font-medium">{formatFileSize(product.fileSize)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Product Price:</span>
-                  <span className="font-medium">${productPrice.toFixed(2)}</span>
+                  <span className="text-gray-600">Download Limit:</span>
+                  <span className="font-medium">{product.downloadLimit}x</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-600">Platform Fee:</span>
-                  <span className="font-medium">${PLATFORM_FEE.toFixed(2)}</span>
+                  <span className="text-gray-600">Link Expiry:</span>
+                  <span className="font-medium">{product.linkExpiryHours} hours</span>
                 </div>
-                <Separator />
-                <div className="flex justify-between text-lg">
-                  <span className="font-bold">Total:</span>
-                  <span className="font-bold text-orange-600">
-                    ${totalPrice.toFixed(2)} USDC
-                  </span>
-                </div>
-                <p className="text-xs text-gray-500 mt-2">
-                  * Plus network fees (~$0.00005 SOL)
-                </p>
+                {purchase && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Your Downloads:</span>
+                    <span className="font-medium">
+                      {purchase.downloadCount} / {purchase.maxDownloads}
+                    </span>
+                  </div>
+                )}
               </CardContent>
             </Card>
+
+            <Separator />
+
+            {/* Pricing Card */}
+            {!purchase && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Price Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Product Price:</span>
+                    <span className="font-medium">${productPrice.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Platform Fee:</span>
+                    <span className="font-medium">${PLATFORM_FEE.toFixed(2)}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between text-lg">
+                    <span className="font-bold">Total:</span>
+                    <span className="font-bold text-orange-600">
+                      ${totalPrice.toFixed(2)} USDC
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-2">
+                    * Plus network fees (~$0.00005 SOL)
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Error Alert */}
             {error && (
@@ -475,7 +477,7 @@ export default function ProductDetailPage() {
               </Alert>
             )}
 
-            {/* Wallet Connect & Purchase */}
+            {/* Action Buttons */}
             <div className="space-y-3">
               {!connected && (
                 <div className="flex justify-center">
@@ -483,20 +485,32 @@ export default function ProductDetailPage() {
                 </div>
               )}
 
-              <Button
-                onClick={handlePurchase}
-                disabled={!connected || processing || !product.isActive || purchaseInProgress.current}
-                className="w-full bg-orange-600 hover:bg-orange-700 h-12 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {processing ? (
-                  <>
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    Processing Payment...
-                  </>
-                ) : (
-                  `Pay ${totalPrice.toFixed(2)} USDC`
-                )}
-              </Button>
+              {connected && !purchase && (
+                <Button
+                  onClick={handlePurchase}
+                  disabled={!connected || processing || !product.isActive || purchaseInProgress.current}
+                  className="w-full bg-orange-600 hover:bg-orange-700 h-12 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {processing ? (
+                    <>
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                      Processing Payment...
+                    </>
+                  ) : (
+                    `Purchase for ${totalPrice.toFixed(2)} USDC`
+                  )}
+                </Button>
+              )}
+
+              {connected && purchase && (
+                <Button
+                  onClick={handleDownload}
+                  className="w-full bg-orange-600 hover:bg-orange-700 h-12 text-lg"
+                >
+                  <Download className="h-5 w-5 mr-2" />
+                  Go to Downloads
+                </Button>
+              )}
 
               {connected && (
                 <p className="text-xs text-center text-gray-500">
@@ -505,8 +519,68 @@ export default function ProductDetailPage() {
                 </p>
               )}
             </div>
+
+            {/* Security Notice */}
+            <Alert className="bg-blue-50 border-blue-200">
+              <CheckCircle className="h-4 w-4 text-blue-600" />
+              <AlertDescription className="text-sm text-blue-800">
+                <strong>Secure Purchase:</strong> Your file is stored securely and you'll receive 
+                a unique download link. Links expire after {product.linkExpiryHours} hours but 
+                you can generate new ones up to {product.downloadLimit} times.
+              </AlertDescription>
+            </Alert>
           </div>
         </div>
+
+        {/* Additional Info Section */}
+        <Card className="mt-8">
+          <CardHeader>
+            <CardTitle>How It Works</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid md:grid-cols-4 gap-6">
+              <div className="text-center">
+                <div className="bg-orange-100 rounded-full h-12 w-12 flex items-center justify-center mx-auto mb-3">
+                  <span className="text-2xl font-bold text-orange-600">1</span>
+                </div>
+                <h4 className="font-semibold mb-1">Connect Wallet</h4>
+                <p className="text-sm text-gray-600">
+                  Connect your Solana wallet to make a purchase
+                </p>
+              </div>
+
+              <div className="text-center">
+                <div className="bg-orange-100 rounded-full h-12 w-12 flex items-center justify-center mx-auto mb-3">
+                  <span className="text-2xl font-bold text-orange-600">2</span>
+                </div>
+                <h4 className="font-semibold mb-1">Complete Payment</h4>
+                <p className="text-sm text-gray-600">
+                  Pay with USDC on Solana - fast and cheap
+                </p>
+              </div>
+
+              <div className="text-center">
+                <div className="bg-orange-100 rounded-full h-12 w-12 flex items-center justify-center mx-auto mb-3">
+                  <span className="text-2xl font-bold text-orange-600">3</span>
+                </div>
+                <h4 className="font-semibold mb-1">Get Access</h4>
+                <p className="text-sm text-gray-600">
+                  Instant access to your purchase after confirmation
+                </p>
+              </div>
+
+              <div className="text-center">
+                <div className="bg-orange-100 rounded-full h-12 w-12 flex items-center justify-center mx-auto mb-3">
+                  <span className="text-2xl font-bold text-orange-600">4</span>
+                </div>
+                <h4 className="font-semibold mb-1">Download Anytime</h4>
+                <p className="text-sm text-gray-600">
+                  Generate download links within your limit
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

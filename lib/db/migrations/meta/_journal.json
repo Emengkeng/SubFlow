@@ -15,6 +15,13 @@
       "when": 1761338288361,
       "tag": "0001_tiny_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1761374857868,
+      "tag": "0002_serious_pretty_boy",
+      "breakpoints": true
     }
   ]
 }
