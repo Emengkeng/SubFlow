@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProductById, updateProduct, deleteProduct } from '@/lib/db/payment-queries';
+import { getProductById, getProductBySlug, updateProduct, deleteProduct } from '@/lib/db/payment-queries';
 
 export async function GET(
   request: NextRequest,
@@ -7,7 +7,13 @@ export async function GET(
 ) {
   try {
     const { productId } = await params;
-    const product = await getProductById(productId);
+    
+    let product
+    product = await getProductBySlug(productId);
+    
+    if (!product) {
+      product = await getProductById(productId); 
+    }
 
     if (!product) {
       return NextResponse.json({ error: 'Product not found' }, { status: 404 });

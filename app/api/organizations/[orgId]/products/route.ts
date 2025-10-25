@@ -113,7 +113,7 @@ export async function POST(
       );
     }
 
-    const productSlug = slug || generateUniqueSlug(name, 6);
+    const productSlug = generateUniqueSlug(name, 6);
 
     const product = await createProduct({
       organizationId: orgId,
