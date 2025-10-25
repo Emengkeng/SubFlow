@@ -67,19 +67,51 @@ export async function getOrganizationById(orgId: string) {
 export async function createProduct(data: {
   organizationId: string;
   name: string;
+  slug: string;
   description?: string;
   price: string;
   tokenMint: string;
   tokenDecimals?: number;
   merchantWallet: string;
   imageUrl?: string;
+  previewUrl?: string;
+  thumbnailUrl?: string;
   metadata?: any;
+  productType?: string;
+  fileSize?: number;
+  fileType?: string;
+  downloadLimit?: number;
+  linkExpiryHours?: number;
+  supabaseFileId?: string;
+  supabaseBucket?: string;
+  categoryId?: string;
+  tags?: string[];
+  searchVector?: string;
+  viewCount?: number;
+  purchaseCount?: number;
+  rating?: string;
+  reviewCount?: number;
+  isActive?: boolean;
+  isFeatured?: boolean;
+  publishedAt?: Date;
 }) {
   const result = await db
     .insert(products)
     .values({
       ...data,
       tokenDecimals: data.tokenDecimals || 6,
+      productType: data.productType || 'digital',
+      downloadLimit: data.downloadLimit || 5,
+      linkExpiryHours: data.linkExpiryHours || 24,
+      supabaseBucket: data.supabaseBucket || 'digital-products',
+      isActive: data.isActive ?? true,
+      isFeatured: data.isFeatured ?? false,
+      viewCount: data.viewCount || 0,
+      purchaseCount: data.purchaseCount || 0,
+      rating: data.rating || '0',
+      reviewCount: data.reviewCount || 0,
+      // Auto-set publishedAt if active
+      publishedAt: data.isActive !== false ? new Date() : data.publishedAt,
     })
     .returning();
 

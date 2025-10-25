@@ -88,6 +88,10 @@ export default function OrgProductsPage() {
       const priceInUSDC = parseFloat(formData.get('price') as string);
       const priceInSmallestUnit = Math.floor(priceInUSDC * 1_000_000).toString();
 
+      // Get tags if provided
+      const tagsString = formData.get('tags') as string;
+      const tags = tagsString ? tagsString.split(',').map(t => t.trim()).filter(Boolean) : [];
+
       const response = await fetch(`/api/organizations/${orgId}/products`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,13 +99,18 @@ export default function OrgProductsPage() {
           name: formData.get('name'),
           description: formData.get('description'),
           price: priceInSmallestUnit,
-          tokenMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU', // USDC
+          tokenMint: 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr', // USDC
           tokenDecimals: 6,
           merchantWallet: formData.get('merchantWallet'),
           imageUrl: formData.get('imageUrl'),
+          // Digital product fields
           productType: 'digital',
           downloadLimit: parseInt(formData.get('downloadLimit') as string) || 5,
           linkExpiryHours: parseInt(formData.get('linkExpiryHours') as string) || 24,
+          // Discovery fields
+          categoryId: formData.get('categoryId') || undefined,
+          tags: tags.length > 0 ? tags : undefined,
+          isFeatured: formData.get('isFeatured') === 'on',
         }),
       });
 
@@ -267,7 +276,7 @@ export default function OrgProductsPage() {
                   accept=".pdf,.zip,.mp4,.mp3,.epub,.mobi"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Supported: PDF, ZIP, MP4, MP3, EPUB, MOBI (max 5GB)
+                  Supported: PDF, ZIP, MP4, MP3, EPUB, MOBI (max 30MB)
                 </p>
               </div>
 
@@ -310,6 +319,46 @@ export default function OrgProductsPage() {
                   <p className="text-xs text-gray-500 mt-1">
                     How long download links last
                   </p>
+                </div>
+
+                <div>
+                  <Label htmlFor="categoryId">Category (optional)</Label>
+                  <select
+                    id="categoryId"
+                    name="categoryId"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                  >
+                    <option value="">Select a category</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>
+                        {cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <Label htmlFor="tags">Tags (comma-separated)</Label>
+                  <Input
+                    id="tags"
+                    name="tags"
+                    placeholder="react, javascript, tutorial"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Help customers find your product
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="isFeatured"
+                    name="isFeatured"
+                    className="h-4 w-4"
+                  />
+                  <Label htmlFor="isFeatured" className="cursor-pointer">
+                    Featured Product
+                  </Label>
                 </div>
               </div>
 

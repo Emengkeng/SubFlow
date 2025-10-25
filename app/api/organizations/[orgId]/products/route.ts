@@ -25,15 +25,22 @@ async function verifyOrgAccess(userId: number, orgId: string) {
   return access.length > 0;
 }
 
+// Helper function to generate URL-friendly slug
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: { orgId: string } }
 ) {
   try {
-
     const user = await getUser();
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { orgId } = await params;
@@ -44,8 +51,8 @@ export async function GET(
     }
 
     const hasAccess = await verifyOrgAccess(user.id, orgId);
-      if (!hasAccess) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const products = await getProductsByOrganization(orgId);
@@ -69,8 +76,8 @@ export async function POST(
 ) {
   try {
     const user = await getUser();
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { orgId } = await params;
@@ -81,20 +88,31 @@ export async function POST(
     }
 
     const hasAccess = await verifyOrgAccess(user.id, orgId);
-      if (!hasAccess) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const body = await request.json();
     const {
       name,
+      slug,
       description,
       price,
       tokenMint,
       tokenDecimals = 6,
       merchantWallet,
       imageUrl,
+      previewUrl,
+      thumbnailUrl,
       metadata,
+      // Digital product fields
+      productType = 'digital',
+      downloadLimit = 5,
+      linkExpiryHours = 24,
+      // Discovery fields
+      categoryId,
+      tags = [],
+      isFeatured = false,
     } = body;
 
     // Validation
@@ -105,17 +123,31 @@ export async function POST(
       );
     }
 
-    // Create product
+    // Generate slug if not provided
+    const productSlug = slug || generateSlug(name);
+
+    // Create product with all fields
     const product = await createProduct({
       organizationId: orgId,
       name,
+      slug: productSlug,
       description,
       price,
-      tokenMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+      tokenMint: tokenMint || 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr', // USDC
       tokenDecimals,
       merchantWallet,
       imageUrl,
+      previewUrl,
+      thumbnailUrl,
       metadata,
+      // Digital product specifics
+      productType,
+      downloadLimit,
+      linkExpiryHours,
+      // Discovery
+      categoryId,
+      tags,
+      isFeatured,
     });
 
     return NextResponse.json({
