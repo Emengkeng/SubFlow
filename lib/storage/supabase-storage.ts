@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!; // Use service role for server operations
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -20,7 +20,8 @@ export class SupabaseStorageService {
         BUCKET_NAME,
         {
           public: false, // Private bucket - require signed URLs
-          fileSizeLimit: 5 * 1024 * 1024 * 1024, // 5GB max file size
+           fileSizeLimit: 3 * 1024 * 1024, // 30MB max file size
+          // fileSizeLimit: 5 * 1024 * 1024 * 1024, // 5GB max file size
         }
       );
 
