@@ -7,6 +7,21 @@ CREATE TABLE "activity_logs" (
 	"ip_address" varchar(45)
 );
 --> statement-breakpoint
+CREATE TABLE "categories" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"name" varchar(100) NOT NULL,
+	"slug" varchar(100) NOT NULL,
+	"description" text,
+	"icon" varchar(50),
+	"image_url" text,
+	"parent_id" uuid,
+	"display_order" integer DEFAULT 0,
+	"is_active" boolean DEFAULT true,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "categories_slug_unique" UNIQUE("slug")
+);
+--> statement-breakpoint
 CREATE TABLE "dead_letter_queue" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"payment_id" uuid,
@@ -17,6 +32,21 @@ CREATE TABLE "dead_letter_queue" (
 	"processed" boolean DEFAULT false,
 	"processed_at" timestamp,
 	"created_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "download_links" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"purchase_id" uuid NOT NULL,
+	"product_id" uuid NOT NULL,
+	"token" varchar(128) NOT NULL,
+	"customer_wallet" varchar(44) NOT NULL,
+	"expires_at" timestamp NOT NULL,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"is_used" boolean DEFAULT false,
+	"used_at" timestamp,
+	"ip_address" varchar(45),
+	"user_agent" text,
+	CONSTRAINT "download_links_token_unique" UNIQUE("token")
 );
 --> statement-breakpoint
 CREATE TABLE "invitations" (
@@ -127,17 +157,114 @@ CREATE TABLE "platform_revenue" (
 CREATE TABLE "products" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"organization_id" uuid NOT NULL,
+	"category_id" uuid,
 	"name" varchar(255) NOT NULL,
+	"slug" varchar(255) NOT NULL,
 	"description" text,
 	"price" numeric(20, 0) NOT NULL,
 	"token_mint" varchar(44) NOT NULL,
 	"token_decimals" integer DEFAULT 6 NOT NULL,
 	"merchant_wallet" varchar(44) NOT NULL,
+	"product_type" varchar(50) DEFAULT 'digital' NOT NULL,
+	"file_size" integer,
+	"file_type" varchar(100),
+	"download_limit" integer DEFAULT 5,
+	"link_expiry_hours" integer DEFAULT 24,
+	"image_url" text,
+	"preview_url" text,
+	"thumbnail_url" text,
+	"supabase_file_id" varchar(255),
+	"supabase_bucket" varchar(255) DEFAULT 'digital-products',
+	"tags" jsonb,
+	"search_vector" text,
+	"view_count" integer DEFAULT 0,
+	"purchase_count" integer DEFAULT 0,
+	"rating" numeric(3, 2) DEFAULT '0',
+	"review_count" integer DEFAULT 0,
+	"metadata" jsonb,
+	"is_active" boolean DEFAULT true,
+	"is_featured" boolean DEFAULT false,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	"published_at" timestamp
+);
+--> statement-breakpoint
+CREATE TABLE "purchases" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"product_id" uuid NOT NULL,
+	"session_id" uuid NOT NULL,
+	"payment_id" uuid,
+	"organization_id" uuid NOT NULL,
+	"customer_wallet" varchar(44) NOT NULL,
+	"customer_email" varchar(255),
+	"price_paid" numeric(20, 0) NOT NULL,
+	"tx_signature" varchar(128) NOT NULL,
+	"download_count" integer DEFAULT 0,
+	"max_downloads" integer NOT NULL,
+	"last_download_at" timestamp,
+	"status" varchar(50) DEFAULT 'completed' NOT NULL,
+	"metadata" jsonb,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "subscription_payments" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"subscription_id" uuid NOT NULL,
+	"amount" numeric(20, 0) NOT NULL,
+	"platform_fee" numeric(20, 0) NOT NULL,
+	"total_amount" numeric(20, 0) NOT NULL,
+	"tx_signature" varchar(128),
+	"status" varchar(50) DEFAULT 'pending' NOT NULL,
+	"delivery_method" varchar(100),
+	"retry_count" integer DEFAULT 0,
+	"error_message" text,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "subscription_payments_tx_signature_unique" UNIQUE("tx_signature")
+);
+--> statement-breakpoint
+CREATE TABLE "subscription_plans" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"organization_id" uuid NOT NULL,
+	"name" varchar(255) NOT NULL,
+	"description" text,
+	"token_mint" varchar(44) NOT NULL,
+	"amount_per_billing" numeric(20, 0) NOT NULL,
+	"billing_period_days" integer NOT NULL,
+	"token_decimals" integer DEFAULT 6 NOT NULL,
+	"merchant_token_account" varchar(44) NOT NULL,
+	"max_payments" integer,
+	"monthly_spending_cap" numeric(20, 0),
 	"image_url" text,
 	"metadata" jsonb,
 	"is_active" boolean DEFAULT true,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE "subscriptions" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"plan_id" uuid NOT NULL,
+	"organization_id" uuid NOT NULL,
+	"user_wallet" varchar(44) NOT NULL,
+	"user_email" varchar(255),
+	"user_token_account" varchar(44) NOT NULL,
+	"delegate_authority" varchar(44) NOT NULL,
+	"approval_tx_signature" varchar(128),
+	"delegation_verified" boolean DEFAULT false,
+	"amount" numeric(20, 0) NOT NULL,
+	"platform_fee" numeric(20, 0) NOT NULL,
+	"total_amount" numeric(20, 0) NOT NULL,
+	"next_billing_date" timestamp NOT NULL,
+	"last_billing_date" timestamp,
+	"status" varchar(50) DEFAULT 'pending_approval' NOT NULL,
+	"total_payments" integer DEFAULT 0,
+	"failed_payments" integer DEFAULT 0,
+	"metadata" jsonb,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	"updated_at" timestamp DEFAULT now() NOT NULL,
+	"cancelled_at" timestamp
 );
 --> statement-breakpoint
 CREATE TABLE "team_members" (
@@ -192,6 +319,8 @@ ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_team_id_teams_id_fk" F
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "dead_letter_queue" ADD CONSTRAINT "dead_letter_queue_payment_id_payments_id_fk" FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "dead_letter_queue" ADD CONSTRAINT "dead_letter_queue_session_id_payment_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."payment_sessions"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "download_links" ADD CONSTRAINT "download_links_purchase_id_purchases_id_fk" FOREIGN KEY ("purchase_id") REFERENCES "public"."purchases"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "download_links" ADD CONSTRAINT "download_links_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "invitations" ADD CONSTRAINT "invitations_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "invitations" ADD CONSTRAINT "invitations_invited_by_users_id_fk" FOREIGN KEY ("invited_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "payment_errors" ADD CONSTRAINT "payment_errors_payment_id_payments_id_fk" FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -203,6 +332,15 @@ ALTER TABLE "payments" ADD CONSTRAINT "payments_organization_id_organizations_id
 ALTER TABLE "platform_revenue" ADD CONSTRAINT "platform_revenue_payment_id_payments_id_fk" FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "platform_revenue" ADD CONSTRAINT "platform_revenue_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "products" ADD CONSTRAINT "products_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "products" ADD CONSTRAINT "products_category_id_categories_id_fk" FOREIGN KEY ("category_id") REFERENCES "public"."categories"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "purchases" ADD CONSTRAINT "purchases_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "purchases" ADD CONSTRAINT "purchases_session_id_payment_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."payment_sessions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "purchases" ADD CONSTRAINT "purchases_payment_id_payments_id_fk" FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "purchases" ADD CONSTRAINT "purchases_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "subscription_payments" ADD CONSTRAINT "subscription_payments_subscription_id_subscriptions_id_fk" FOREIGN KEY ("subscription_id") REFERENCES "public"."subscriptions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "subscription_plans" ADD CONSTRAINT "subscription_plans_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_plan_id_subscription_plans_id_fk" FOREIGN KEY ("plan_id") REFERENCES "public"."subscription_plans"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "team_members" ADD CONSTRAINT "team_members_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "team_members" ADD CONSTRAINT "team_members_team_id_teams_id_fk" FOREIGN KEY ("team_id") REFERENCES "public"."teams"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "teams" ADD CONSTRAINT "teams_organization_id_organizations_id_fk" FOREIGN KEY ("organization_id") REFERENCES "public"."organizations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -211,6 +349,12 @@ CREATE INDEX "activity_logs_team_id_idx" ON "activity_logs" USING btree ("team_i
 CREATE INDEX "activity_logs_user_id_idx" ON "activity_logs" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "activity_logs_timestamp_idx" ON "activity_logs" USING btree ("timestamp");--> statement-breakpoint
 CREATE INDEX "activity_logs_action_idx" ON "activity_logs" USING btree ("action");--> statement-breakpoint
+CREATE INDEX "categories_slug_idx" ON "categories" USING btree ("slug");--> statement-breakpoint
+CREATE INDEX "categories_parent_idx" ON "categories" USING btree ("parent_id");--> statement-breakpoint
+CREATE INDEX "categories_active_idx" ON "categories" USING btree ("is_active");--> statement-breakpoint
+CREATE INDEX "download_links_token_idx" ON "download_links" USING btree ("token");--> statement-breakpoint
+CREATE INDEX "download_links_customer_idx" ON "download_links" USING btree ("customer_wallet");--> statement-breakpoint
+CREATE INDEX "download_links_expires_idx" ON "download_links" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX "organizations_api_key_idx" ON "organizations" USING btree ("api_key");--> statement-breakpoint
 CREATE INDEX "organizations_is_active_idx" ON "organizations" USING btree ("is_active");--> statement-breakpoint
 CREATE INDEX "sessions_product_idx" ON "payment_sessions" USING btree ("product_id");--> statement-breakpoint
@@ -222,7 +366,26 @@ CREATE INDEX "payments_org_idx" ON "payments" USING btree ("organization_id");--
 CREATE INDEX "payments_status_idx" ON "payments" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "payments_tx_idx" ON "payments" USING btree ("tx_signature");--> statement-breakpoint
 CREATE INDEX "products_org_idx" ON "products" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "products_category_idx" ON "products" USING btree ("category_id");--> statement-breakpoint
 CREATE INDEX "products_active_idx" ON "products" USING btree ("is_active");--> statement-breakpoint
+CREATE INDEX "products_type_idx" ON "products" USING btree ("product_type");--> statement-breakpoint
+CREATE INDEX "products_slug_idx" ON "products" USING btree ("slug");--> statement-breakpoint
+CREATE INDEX "products_featured_idx" ON "products" USING btree ("is_featured");--> statement-breakpoint
+CREATE INDEX "products_purchase_count_idx" ON "products" USING btree ("purchase_count");--> statement-breakpoint
+CREATE INDEX "products_search_idx" ON "products" USING btree ("search_vector");--> statement-breakpoint
+CREATE INDEX "purchases_product_idx" ON "purchases" USING btree ("product_id");--> statement-breakpoint
+CREATE INDEX "purchases_customer_idx" ON "purchases" USING btree ("customer_wallet");--> statement-breakpoint
+CREATE INDEX "purchases_tx_idx" ON "purchases" USING btree ("tx_signature");--> statement-breakpoint
+CREATE INDEX "sub_payments_subscription_idx" ON "subscription_payments" USING btree ("subscription_id");--> statement-breakpoint
+CREATE INDEX "sub_payments_status_idx" ON "subscription_payments" USING btree ("status");--> statement-breakpoint
+CREATE INDEX "sub_payments_tx_idx" ON "subscription_payments" USING btree ("tx_signature");--> statement-breakpoint
+CREATE INDEX "sub_plans_org_idx" ON "subscription_plans" USING btree ("organization_id");--> statement-breakpoint
+CREATE INDEX "sub_plans_active_idx" ON "subscription_plans" USING btree ("is_active");--> statement-breakpoint
+CREATE INDEX "subscriptions_user_idx" ON "subscriptions" USING btree ("user_wallet");--> statement-breakpoint
+CREATE INDEX "subscriptions_plan_idx" ON "subscriptions" USING btree ("plan_id");--> statement-breakpoint
+CREATE INDEX "subscriptions_status_idx" ON "subscriptions" USING btree ("status");--> statement-breakpoint
+CREATE INDEX "subscriptions_next_billing_idx" ON "subscriptions" USING btree ("next_billing_date");--> statement-breakpoint
+CREATE INDEX "unique_active_sub" ON "subscriptions" USING btree ("plan_id","user_wallet","status") WHERE status IN ('active', 'pending_approval');--> statement-breakpoint
 CREATE INDEX "webhooks_organization_id_idx" ON "webhooks" USING btree ("organization_id");--> statement-breakpoint
 CREATE INDEX "webhooks_status_idx" ON "webhooks" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "webhooks_event_type_idx" ON "webhooks" USING btree ("event_type");

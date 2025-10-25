@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1761139929365,
-      "tag": "0000_magenta_sugar_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1761338288361,
-      "tag": "0001_tiny_valkyrie",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1761374857868,
-      "tag": "0002_serious_pretty_boy",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1761377390270,
-      "tag": "0003_mysterious_the_hand",
+      "when": 1761378324373,
+      "tag": "0000_orange_talon",
       "breakpoints": true
     }
   ]
