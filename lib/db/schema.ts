@@ -86,10 +86,6 @@ export const invitations = pgTable('invitations', {
 });
 
 
-// ============================================================================
-// PAYMENT SYSTEM TABLES (Refactored)
-// ============================================================================
-
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -113,8 +109,13 @@ export const products = pgTable('products', {
     .notNull()
     .references(() => organizations.id, { onDelete: 'cascade' }),
   
+  // Category (NEW)
+  categoryId: uuid('category_id')
+    .references(() => categories.id, { onDelete: 'set null' }),
+  
   // Basic info
   name: varchar('name', { length: 255 }).notNull(),
+  slug: varchar('slug', { length: 255 }).notNull(), //URL-friendly name
   description: text('description'),
   price: numeric('price', { precision: 20, scale: 0 }).notNull(),
   
@@ -123,32 +124,68 @@ export const products = pgTable('products', {
   tokenDecimals: integer('token_decimals').notNull().default(6),
   merchantWallet: varchar('merchant_wallet', { length: 44 }).notNull(),
   
-  // Digital product specifics (NEW)
-  productType: varchar('product_type', { length: 50 }).notNull().default('digital'), // 'digital', 'physical', 'service'
-  fileSize: bigint('file_size', { mode: 'number' }), // in bytes
-  fileType: varchar('file_type', { length: 100 }), // 'pdf', 'video', 'ebook', 'software', etc.
-  downloadLimit: integer('download_limit').default(5), // max downloads per purchase
-  linkExpiryHours: integer('link_expiry_hours').default(24), // how long download link is valid
+  // Digital product specifics
+  productType: varchar('product_type', { length: 50 }).notNull().default('digital'),
+  fileSize: integer('file_size'), // in bytes
+  fileType: varchar('file_type', { length: 100 }),
+  downloadLimit: integer('download_limit').default(5),
+  linkExpiryHours: integer('link_expiry_hours').default(24),
   
   // Media
   imageUrl: text('image_url'),
-  previewUrl: text('preview_url'), // NEW: Preview/sample file URL
+  previewUrl: text('preview_url'),
+  thumbnailUrl: text('thumbnail_url'), // Smaller image for listings
   
-  // Storage reference (NEW)
-  supabaseFileId: varchar('supabase_file_id', { length: 255 }), // Supabase storage file ID
+  // Storage reference
+  supabaseFileId: varchar('supabase_file_id', { length: 255 }),
   supabaseBucket: varchar('supabase_bucket', { length: 255 }).default('digital-products'),
+  
+  // SEO & Discovery (NEW)
+  tags: jsonb('tags').$type<string[]>(), // ['javascript', 'react', 'tutorial']
+  searchVector: text('search_vector'), // For full-text search
+  
+  // Stats (NEW)
+  viewCount: integer('view_count').default(0),
+  purchaseCount: integer('purchase_count').default(0),
+  rating: numeric('rating', { precision: 3, scale: 2 }).default('0'), // Average rating
+  reviewCount: integer('review_count').default(0),
   
   // Metadata
   metadata: jsonb('metadata'),
-  tags: jsonb('tags'), // NEW: ['ebook', 'business', 'marketing']
+  isActive: boolean('is_active').default(true),
+  isFeatured: boolean('is_featured').default(false), // NEW: Featured products
   
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  publishedAt: timestamp('published_at'), // NEW: When product was published
+}, (table) => ({
+  orgIdx: index('products_org_idx').on(table.organizationId),
+  categoryIdx: index('products_category_idx').on(table.categoryId),
+  activeIdx: index('products_active_idx').on(table.isActive),
+  typeIdx: index('products_type_idx').on(table.productType),
+  slugIdx: index('products_slug_idx').on(table.slug),
+  featuredIdx: index('products_featured_idx').on(table.isFeatured),
+  purchaseCountIdx: index('products_purchase_count_idx').on(table.purchaseCount),
+  // For full-text search
+  searchIdx: index('products_search_idx').on(table.searchVector),
+}));
+
+export const categories = pgTable('categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  slug: varchar('slug', { length: 100 }).notNull().unique(),
+  description: text('description'),
+  icon: varchar('icon', { length: 50 }), // Icon name (lucide-react)
+  imageUrl: text('image_url'),
+  parentId: uuid('parent_id'), // For sub-categories
+  displayOrder: integer('display_order').default(0),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => ({
-  orgIdx: index('products_org_idx').on(table.organizationId),
-  activeIdx: index('products_active_idx').on(table.isActive),
-  typeIdx: index('products_type_idx').on(table.productType),
+  slugIdx: index('categories_slug_idx').on(table.slug),
+  parentIdx: index('categories_parent_idx').on(table.parentId),
+  activeIdx: index('categories_active_idx').on(table.isActive),
 }));
 
 export const paymentSessions = pgTable('payment_sessions', {
@@ -613,6 +650,10 @@ export const productsRelations = relations(products, ({ one, many }) => ({
     fields: [products.organizationId],
     references: [organizations.id],
   }),
+  category: one(categories, {
+    fields: [products.categoryId],
+    references: [categories.id],
+  }),
   purchases: many(purchases),
   paymentSessions: many(paymentSessions),
 }));
@@ -646,6 +687,18 @@ export const downloadLinksRelations = relations(downloadLinks, ({ one }) => ({
     fields: [downloadLinks.productId],
     references: [products.id],
   }),
+}));
+
+export const categoriesRelations = relations(categories, ({ one, many }) => ({
+  parent: one(categories, {
+    fields: [categories.parentId],
+    references: [categories.id],
+    relationName: 'parentCategory',
+  }),
+  children: many(categories, {
+    relationName: 'parentCategory',
+  }),
+  products: many(products),
 }));
 
 
@@ -726,6 +779,8 @@ export type Purchase = typeof purchases.$inferSelect;
 export type NewPurchase = typeof purchases.$inferInsert;
 export type DownloadLink = typeof downloadLinks.$inferSelect;
 export type NewDownloadLink = typeof downloadLinks.$inferInsert;
+export type Category = typeof categories.$inferSelect;
+export type NewCategory = typeof categories.$inferInsert;
 
 export enum SubscriptionStatus {
   PENDING_APPROVAL = 'pending_approval',
