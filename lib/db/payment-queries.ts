@@ -1,4 +1,4 @@
-import { desc, and, eq, lte, sql, inArray, gte } from 'drizzle-orm';
+import { desc, and, eq, lte, sql, inArray, gte, asc, isNull } from 'drizzle-orm';
 import { db } from './drizzle';
 import {
   organizations,
@@ -21,6 +21,7 @@ import {
   type SubscriptionPlan,
   purchases,
   downloadLinks,
+  categories,
 } from './schema';
 
 // ============================================================================
@@ -1325,4 +1326,208 @@ export async function getTopSellingProducts(organizationId: string, limit = 10) 
     .groupBy(products.id)
     .orderBy(desc(sql`COUNT(${purchases.id})`))
     .limit(limit);
+}
+
+export async function getAllCategories(includeInactive = false) {
+  const conditions = [];
+  
+  if (!includeInactive) {
+    conditions.push(eq(categories.isActive, true));
+  }
+
+  return await db.query.categories.findMany({
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+  });
+}
+
+export async function getTopLevelCategories(includeInactive = false) {
+  const conditions = [isNull(categories.parentId)];
+  
+  if (!includeInactive) {
+    conditions.push(eq(categories.isActive, true));
+  }
+
+  return await db.query.categories.findMany({
+    where: and(...conditions),
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+    with: {
+      children: {
+        where: includeInactive ? undefined : eq(categories.isActive, true),
+        orderBy: [asc(categories.displayOrder), asc(categories.name)],
+      },
+    },
+  });
+}
+
+export async function getCategoryBySlug(slug: string) {
+  const result = await db.query.categories.findFirst({
+    where: and(
+      eq(categories.slug, slug),
+      eq(categories.isActive, true)
+    ),
+    with: {
+      children: {
+        where: eq(categories.isActive, true),
+        orderBy: [asc(categories.displayOrder), asc(categories.name)],
+      },
+      parent: true,
+    },
+  });
+
+  return result || null;
+}
+
+export async function getCategoryById(categoryId: string) {
+  const result = await db.query.categories.findFirst({
+    where: eq(categories.id, categoryId),
+    with: {
+      children: {
+        orderBy: [asc(categories.displayOrder), asc(categories.name)],
+      },
+      parent: true,
+    },
+  });
+
+  return result || null;
+}
+
+export async function getSubCategories(parentId: string, includeInactive = false) {
+  const conditions = [eq(categories.parentId, parentId)];
+  
+  if (!includeInactive) {
+    conditions.push(eq(categories.isActive, true));
+  }
+
+  return await db.query.categories.findMany({
+    where: and(...conditions),
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+  });
+}
+
+export async function createCategory(data: {
+  name: string;
+  slug: string;
+  description?: string;
+  icon?: string;
+  imageUrl?: string;
+  parentId?: string;
+  displayOrder?: number;
+  isActive?: boolean;
+}) {
+  const result = await db
+    .insert(categories)
+    .values({
+      ...data,
+      displayOrder: data.displayOrder || 0,
+      isActive: data.isActive ?? true,
+    })
+    .returning();
+
+  return result[0];
+}
+
+export async function updateCategory(
+  categoryId: string,
+  data: Partial<typeof categories.$inferInsert>
+) {
+  const result = await db
+    .update(categories)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(categories.id, categoryId))
+    .returning();
+
+  return result[0];
+}
+
+export async function deleteCategory(categoryId: string) {
+  // Soft delete by setting isActive to false
+  const result = await db
+    .update(categories)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(eq(categories.id, categoryId))
+    .returning();
+
+  return result[0];
+}
+
+export async function getCategoryWithProductCount(categoryId: string) {
+  const category = await db.query.categories.findFirst({
+    where: eq(categories.id, categoryId),
+    with: {
+      products: {
+        where: and(
+          eq(products.isActive, true),
+          eq(products.categoryId, categoryId)
+        ),
+        columns: { id: true },
+      },
+    },
+  });
+
+  if (!category) return null;
+
+  return {
+    ...category,
+    productCount: category.products?.length || 0,
+  };
+}
+
+export async function getAllCategoriesWithProductCounts() {
+  const allCategories = await db.query.categories.findMany({
+    where: eq(categories.isActive, true),
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+    with: {
+      products: {
+        where: eq(products.isActive, true),
+        columns: { id: true },
+      },
+    },
+  });
+
+  return allCategories.map(cat => ({
+    id: cat.id,
+    name: cat.name,
+    slug: cat.slug,
+    description: cat.description,
+    icon: cat.icon,
+    imageUrl: cat.imageUrl,
+    parentId: cat.parentId,
+    displayOrder: cat.displayOrder,
+    isActive: cat.isActive,
+    productCount: cat.products?.length || 0,
+    createdAt: cat.createdAt,
+    updatedAt: cat.updatedAt,
+  }));
+}
+
+// Get products by category
+export async function getProductsByCategory(
+  categorySlugOrId: string,
+  limit = 50
+) {
+  // Try to find by slug first, then by ID
+  const category = await db.query.categories.findFirst({
+    where: sql`${categories.slug} = ${categorySlugOrId} OR ${categories.id} = ${categorySlugOrId}`,
+  });
+
+  if (!category) return [];
+
+  return await db.query.products.findMany({
+    where: and(
+      eq(products.categoryId, category.id),
+      eq(products.isActive, true)
+    ),
+    with: {
+      organization: {
+        columns: {
+          id: true,
+          name: true,
+          logoUrl: true,
+        },
+      },
+    },
+    orderBy: [desc(products.purchaseCount), desc(products.createdAt)],
+    limit,
+  });
 }
