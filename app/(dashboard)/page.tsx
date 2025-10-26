@@ -241,8 +241,8 @@ export default function HomePage() {
                 className="rounded-full"
                 asChild
               >
-                <a href="/dashboard/org/create">
-                  Create Organization
+                <a href="/sign-up">
+                  Create Account
                   <ArrowRight className="ml-3 h-6 w-6" />
                 </a>
               </Button>
