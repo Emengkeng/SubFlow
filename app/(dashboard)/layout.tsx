@@ -13,6 +13,9 @@ import {
   DropdownMenuSeparator
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import useSWR, { mutate } from 'swr';
+
+const fetcher = (url: string) => fetch(url).then((res) => res.json());
 
 // SubFlow Logo Component
 function SubFlowLogo() {
@@ -39,13 +42,28 @@ function SubFlowLogo() {
   );
 }
 
-function UserMenu({ user }: { user?: any }) {
+function UserMenu() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const { data: user } = useSWR('/api/user', fetcher);
   const router = useRouter();
 
   async function handleSignOut() {
-    // Add your sign out logic here
-    router.push('/');
+    try {
+      // Call signout endpoint to delete session cookie
+      await fetch('/api/auth/signout', { 
+        method: 'POST',
+        credentials: 'include'
+      });
+      
+      // Clear SWR cache
+      mutate('/api/user', null);
+      
+      // Redirect to home
+      router.push('/');
+      router.refresh();
+    } catch (error) {
+      console.error('Sign out error:', error);
+    }
   }
 
   if (!user) {
@@ -68,20 +86,17 @@ function UserMenu({ user }: { user?: any }) {
   }
 
   return (
-    <div className="flex items-center gap-3">
-      <Link
-        href="/products"
-        className="text-sm font-medium text-gray-700 hover:text-gray-900 hidden sm:block"
-      >
-        Browse
-      </Link>
-      <Link
-        href="/my-purchase"
-        className="text-sm font-medium text-gray-700 hover:text-gray-900 hidden sm:block"
-      >
-        My Purchases
-      </Link>
-      
+    <>
+      {/* Desktop Navigation - Only shown when authenticated */}
+      <nav className="hidden md:flex items-center gap-6 text-sm font-medium mr-6">
+        <Link href="/products" className="text-gray-700 hover:text-gray-900">
+          Marketplace
+        </Link>
+        <Link href="/my-purchase" className="text-gray-700 hover:text-gray-900">
+          My Purchases
+        </Link>
+      </nav>
+
       <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
         <DropdownMenuTrigger>
           <Avatar className="cursor-pointer size-9">
@@ -91,7 +106,12 @@ function UserMenu({ user }: { user?: any }) {
                 ?.split(' ')
                 .map((n: string) => n[0])
                 .join('')
-                .toUpperCase() || 'U'}
+                .toUpperCase() || 
+                user.name
+                  ?.split(' ')
+                  .map((n: string) => n[0])
+                  .join('')
+                  .toUpperCase() || 'U'}
             </AvatarFallback>
           </Avatar>
         </DropdownMenuTrigger>
@@ -121,7 +141,7 @@ function UserMenu({ user }: { user?: any }) {
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem 
-            className="cursor-pointer text-red-600 focus:text-red-600"
+            className="cursor-pointer text-red-600 focus:text-red-600 focus:bg-red-50"
             onClick={handleSignOut}
           >
             <LogOut className="mr-2 h-4 w-4" />
@@ -129,13 +149,12 @@ function UserMenu({ user }: { user?: any }) {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </>
   );
 }
 
 function Header() {
-  // In real implementation, fetch user from API
-  const user = null; // Replace with actual user data
+  const { data: user } = useSWR('/api/user', fetcher);
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/80 backdrop-blur-md">
@@ -150,26 +169,29 @@ function Header() {
           </div>
         </Link>
 
-        {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
-          <Link href="/products" className="text-gray-700 hover:text-gray-900">
-            Marketplace
-          </Link>
-          <Link href="/dashboard/org/create" className="text-gray-700 hover:text-gray-900">
-            Start Selling
-          </Link>
-          <Link 
-            href="https://github.com/Emengkeng/subflow" 
-            target="_blank"
-            className="text-gray-700 hover:text-gray-900"
-          >
-            GitHub
-          </Link>
-        </nav>
+        {/* Navigation - only shown when NOT authenticated */}
+        {!user && (
+          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+            <Link href="/products" className="text-gray-700 hover:text-gray-900">
+              Marketplace
+            </Link>
+            <Link href="/dashboard/org/create" className="text-gray-700 hover:text-gray-900">
+              Start Selling
+            </Link>
+            <Link 
+              href="https://github.com/Emengkeng/subflow" 
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gray-700 hover:text-gray-900"
+            >
+              GitHub
+            </Link>
+          </nav>
+        )}
 
         <div className="flex items-center">
           <Suspense fallback={<div className="h-9 w-24 animate-pulse bg-gray-100 rounded" />}>
-            <UserMenu user={user} />
+            <UserMenu />
           </Suspense>
         </div>
       </div>
