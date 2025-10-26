@@ -50,7 +50,7 @@ function UserMenu() {
   async function handleSignOut() {
     try {
       // Call signout endpoint to delete session cookie
-      await fetch('/api/auth/signout', { 
+      await fetch('/api/user/signout', { 
         method: 'POST',
         credentials: 'include'
       });
