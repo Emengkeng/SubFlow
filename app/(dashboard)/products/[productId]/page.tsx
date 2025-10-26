@@ -233,7 +233,7 @@ export default function ProductDetailPage() {
   };
 
   const handleDownload = () => {
-    router.push('/purchases');
+    router.push('/my-purchase');
   };
 
   const handleShare = async () => {
