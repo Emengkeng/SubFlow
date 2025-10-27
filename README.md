@@ -402,6 +402,7 @@ export class SanctumGatewayClient {
 - **Solana Wallet** with devnet/mainnet SOL and USDC
 - **Supabase Account** (for file storage)
 - **Sanctum Gateway API Key** ([get one here](https://gateway.sanctum.so))
+- **Test USDC tokens** ([get one here](https://spl-token-faucet.com/?token-name=USDC-Dev))
 
 ### Environment Variables
 
@@ -409,11 +410,15 @@ Create `.env.local`:
 
 ```bash
 # Database
-DATABASE_URL="postgresql://..."
+POSTGRES_URL="postgresql://..."
 
 # Solana & Sanctum Gateway (REQUIRED)
+RPC_URL_MAINNET=
+RPC_URL_TESTNET=
+GATEWAY_URL_MAINNET=https://tpg.sanctum.so/v1/mainnet
+GATEWAY_URL_TESTNET=https://tpg.sanctum.so/v1/devnet
 GATEWAY_API_KEY="your_sanctum_gateway_api_key"
-NEXT_PUBLIC_RPC_URL="https://api.mainnet-beta.solana.com"
+NEXT_PUBLIC_RPC_URL=https://api.devnet.solana.com
 NODE_ENV="development" # or "production"
 
 # Secrets
@@ -425,8 +430,17 @@ NEXT_PUBLIC_SUPABASE_URL="https://xxx.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY="your_anon_key"
 SUPABASE_SERVICE_ROLE_KEY="your_service_key"
 
+# Backend Authority (Base58 encoded keypair)
+BACKEND_KEYPAIR=
+BACKEND_AUTHORITY=
+PLATFORM_FEE_WALLET=
+USDC_ADDRESS_MAINNET=
+USDC_ADDRESS_TESTNET=
+
 # Platform Config
 BASE_URL="http://localhost:3000" # or production URL
+AUTH_SECRET=
+CRON_SECRET= 
 ```
 
 ### Installation Steps
