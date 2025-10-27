@@ -155,7 +155,7 @@ export class SanctumGatewayClient {
     const data = await response.json();
 
     if (data.error) {
-      throw new Error(`Gateway error: ${JSON.stringify(data.error)}`);
+      throw new Error(`Make sure to get some test USDC Here: https://spl-token-faucet.com/?token-name=USDC-Dev`);
     }
 
     const { transaction: encodedTransaction, latestBlockhash } = data.result;
