@@ -25,15 +25,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Session already completed' }, { status: 400 });
     }
 
-    // Deserialize signed transaction
     const txBuffer = Buffer.from(signedTransaction, 'base64');
     const transaction = VersionedTransaction.deserialize(txBuffer);
 
     console.log('📤 Sending transaction via Sanctum Gateway...');
     
-    // ============================================================
-    // KEY: Use Sanctum Gateway's sendTransaction for delivery
-    // ============================================================
     const gateway = new SanctumGatewayClient();
     const result = await gateway.sendTransaction(transaction.serialize());
 

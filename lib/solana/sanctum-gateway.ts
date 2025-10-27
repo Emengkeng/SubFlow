@@ -75,19 +75,21 @@ export class SanctumGatewayClient {
     }));
   }
 
-  async sendTransaction(signedTransactionBytes: any): Promise<{
+  async sendTransaction(signedTransactionBytes: Uint8Array): Promise<{
     signature: string;
     deliveryMethod: string;
     slot?: number;
   }> {
-    const tipId = `tip-${Date.now()}`;
+    const sendId = `send-${Date.now()}`;
     const dataToSend = {
-      id: tipId,
+      id: sendId,
       jsonrpc: "2.0",
       method: "sendTransaction",
       params: [getBase64EncodedWireTransaction(signedTransactionBytes)],
     };
 
+    console.log('🚀 Sending transaction via Sanctum Gateway...');
+    
     const response = await fetch(this.gatewayUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -104,10 +106,16 @@ export class SanctumGatewayClient {
       throw new Error(`Gateway error: ${data.error.message}`);
     }
 
+    console.log('📊 Gateway delivery results:', data.result);
+
+    // Gateway returns results from multiple delivery methods
     const deliveryResults = data.result;
+    
+    // Find first successful delivery
     for (const [method, results] of Object.entries(deliveryResults)) {
       const resultArray = results as any[];
       if (resultArray[0]?.result) {
+        console.log(`✅ Transaction delivered via: ${method}`);
         return {
           signature: resultArray[0].result,
           deliveryMethod: method,

@@ -178,25 +178,42 @@ export default function ProductDetailPage() {
       const transactionBuffer = Buffer.from(sessionData.transaction, 'base64');
       const transaction = VersionedTransaction.deserialize(transactionBuffer);
 
-      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
-      const connection = new Connection(rpcUrl, {
-        commitment: 'confirmed',
-        confirmTransactionInitialTimeout: 60000,
+      const signedTransaction = await signTransaction(transaction);
+
+      const sendResponse = await fetch('/api/payments/send-transaction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId: sessionData.session.id,
+          signedTransaction: Buffer.from(signedTransaction.serialize()).toString('base64'),
+        }),
       });
 
-      const signature = await sendTransaction(transaction, connection, {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-        maxRetries: 2,
-      });
+      if (!sendResponse.ok) {
+        throw new Error('Failed to send transaction');
+      }
+
+      const { signature } = await sendResponse.json();
+
+      // const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
+      // const connection = new Connection(rpcUrl, {
+      //   commitment: 'confirmed',
+      //   confirmTransactionInitialTimeout: 60000,
+      // });
+
+      // const signature = await sendTransaction(transaction, connection, {
+      //   skipPreflight: false,
+      //   preflightCommitment: 'confirmed',
+      //   maxRetries: 2,
+      // });
 
       setTxSignature(signature);
 
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      // const confirmation = await connection.confirmTransaction(signature, 'confirmed');
 
-      if (confirmation.value.err) {
-        throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-      }
+      // if (confirmation.value.err) {
+      //   throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+      // }
 
       const confirmResponse = await fetch('/api/payments/confirm', {
         method: 'POST',
@@ -210,9 +227,8 @@ export default function ProductDetailPage() {
       if (confirmResponse.ok) {
         const confirmData = await confirmResponse.json();
         setPurchase(confirmData.purchase);
+        setSuccess(true);
       }
-
-      setSuccess(true);
     } catch (err: any) {
       console.error('❌ Purchase failed:', err);
       
