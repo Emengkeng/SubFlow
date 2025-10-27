@@ -1,4 +1,4 @@
-# ⚡ SubFlow — Solana-Powered Digital Marketplace
+# ⚡ SubFlow Solana Powered Digital Marketplace
 
 > **A decentralized marketplace for digital products, built on Solana with Sanctum Gateway at its core.**
 
@@ -651,6 +651,7 @@ Without Sanctum Gateway, building a reliable payment system on Solana would requ
 **Gateway provides all of this out-of-the-box.**
 
 ### Built With
+- [Next.js](https://github.com/nextjs/saas-starter) — Nextjs Starter Kit
 - [Next.js](https://nextjs.org) — React framework
 - [Solana Web3.js](https://github.com/solana-labs/solana-web3.js) — Solana SDK
 - [Sanctum Gateway](https://gateway.sanctum.so) — Transaction reliability ⚡
@@ -667,7 +668,7 @@ Without Sanctum Gateway, building a reliable payment system on Solana would requ
 
 **Hackathon:** [Sanctum Gateway Track](https://earn.superteam.fun/listing/sanctum-gateway-track)
 
-**Demo:** [subflow.vercel.app](https://sub-flow-phi.vercel.app/)  
+**Demo:** [sub-flow-phi.vercel.app](https://sub-flow-phi.vercel.app/)  
 **GitHub:** [github.com/Emengkeng/SubFlow](https://github.com/Emengkeng/SubFlow)
 
 ---
