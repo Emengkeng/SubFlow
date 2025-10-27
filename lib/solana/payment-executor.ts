@@ -19,8 +19,8 @@ import {
   addToDeadLetterQueue,
 } from "@/lib/db/payment-queries";
 import { PaymentSession, Product } from "../db/schema";
-import { PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { Connection, PublicKey } from "@solana/web3.js";
+import { ASSOCIATED_TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction, getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 export enum PaymentErrorType {
   NETWORK_ERROR = "NETWORK_ERROR",
@@ -32,13 +32,25 @@ export enum PaymentErrorType {
 
 export class PaymentExecutor {
   private gateway: SanctumGatewayClient;
+  private connection: Connection;
 
   constructor() {
     this.gateway = new SanctumGatewayClient();
+    this.connection = new Connection(this.gateway.getrpcUrl);
   }
 
   static async create(): Promise<PaymentExecutor> {
     return new PaymentExecutor();
+  }
+
+  private async accountExists(accountAddress: PublicKey): Promise<boolean> {
+    try {
+      const accountInfo = await this.connection.getAccountInfo(accountAddress);
+      return accountInfo !== null;
+    } catch (error) {
+      console.warn('Error checking account:', error);
+      return false;
+    }
   }
 
   /**
@@ -64,19 +76,24 @@ export class PaymentExecutor {
       const instructions: any[] = [];
       const tokenMintAddr = address(session.tokenMint);
       const customerWalletAddr = address(customerWallet);
+      
+      const tokenMintPubkey = new PublicKey(session.tokenMint);
+      const customerWalletPubkey = new PublicKey(customerWallet);
+      const merchantWalletPubkey = new PublicKey(session.merchantWallet);
+      const platformWalletPubkey = new PublicKey(platformConfig.platformFeeWallet);
 
       // Derive token accounts
       const customerTokenAccount = getAssociatedTokenAddressSync(
-        new PublicKey(session.tokenMint),
-        new PublicKey(customerWallet)
+        tokenMintPubkey,
+        customerWalletPubkey
       );
       const merchantTokenAccount = getAssociatedTokenAddressSync(
-        new PublicKey(session.tokenMint),
-        new PublicKey(session.merchantWallet)
+        tokenMintPubkey,
+        merchantWalletPubkey
       );
       const platformTokenAccount = getAssociatedTokenAddressSync(
-        new PublicKey(session.tokenMint),
-        new PublicKey(platformConfig.platformFeeWallet)
+        tokenMintPubkey,
+        platformWalletPubkey
       );
 
       console.log('🔍 Account Addresses:');
@@ -84,6 +101,81 @@ export class PaymentExecutor {
       console.log('   Customer token account:', customerTokenAccount.toString());
       console.log('   Merchant token account:', merchantTokenAccount.toString());
       console.log('   Platform token account:', platformTokenAccount.toString());
+
+      // Check and create ATAs if they don't exist
+      console.log('🔍 Checking token account existence...');
+      
+      const [customerExists, merchantExists, platformExists] = await Promise.all([
+        this.accountExists(customerTokenAccount),
+        this.accountExists(merchantTokenAccount),
+        this.accountExists(platformTokenAccount)
+      ]);
+
+      console.log('   Customer ATA exists:', customerExists);
+      console.log('   Merchant ATA exists:', merchantExists);
+      console.log('   Platform ATA exists:', platformExists);
+
+      // Add creation instructions for missing ATAs
+      if (!customerExists) {
+        console.log('➕ Adding instruction to create customer ATA');
+        const createCustomerATAIx = createAssociatedTokenAccountInstruction(
+          customerWalletPubkey, // payer
+          customerTokenAccount,
+          customerWalletPubkey, // owner
+          tokenMintPubkey,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        // Convert to @solana/kit format
+        instructions.push({
+          programAddress: address(ASSOCIATED_TOKEN_PROGRAM_ID.toString()),
+          accounts: createCustomerATAIx.keys.map(k => ({
+            address: address(k.pubkey.toString()),
+            role: k.isWritable ? (k.isSigner ? 3 : 1) : (k.isSigner ? 2 : 0)
+          })),
+          data: createCustomerATAIx.data
+        });
+      }
+
+      if (!merchantExists) {
+        console.log('➕ Adding instruction to create merchant ATA');
+        const createMerchantATAIx = createAssociatedTokenAccountInstruction(
+          customerWalletPubkey, // payer (customer pays for merchant's ATA)
+          merchantTokenAccount,
+          merchantWalletPubkey, // owner
+          tokenMintPubkey,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        instructions.push({
+          programAddress: address(ASSOCIATED_TOKEN_PROGRAM_ID.toString()),
+          accounts: createMerchantATAIx.keys.map(k => ({
+            address: address(k.pubkey.toString()),
+            role: k.isWritable ? (k.isSigner ? 3 : 1) : (k.isSigner ? 2 : 0)
+          })),
+          data: createMerchantATAIx.data
+        });
+      }
+
+      if (!platformExists) {
+        console.log('➕ Adding instruction to create platform ATA');
+        const createPlatformATAIx = createAssociatedTokenAccountInstruction(
+          customerWalletPubkey, // payer (customer pays for platform's ATA)
+          platformTokenAccount,
+          platformWalletPubkey, // owner
+          tokenMintPubkey,
+          TOKEN_PROGRAM_ID,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        );
+        instructions.push({
+          programAddress: address(ASSOCIATED_TOKEN_PROGRAM_ID.toString()),
+          accounts: createPlatformATAIx.keys.map(k => ({
+            address: address(k.pubkey.toString()),
+            role: k.isWritable ? (k.isSigner ? 3 : 1) : (k.isSigner ? 2 : 0)
+          })),
+          data: createPlatformATAIx.data
+        });
+      }
 
       // Transfer to merchant
       const merchantTransferIx = getTransferCheckedInstruction({
@@ -107,20 +199,11 @@ export class PaymentExecutor {
 
       instructions.push(merchantTransferIx, platformTransferIx);
 
-      console.log(`📦 Built ${instructions.length} transfer instructions`);
+      console.log(`📦 Built ${instructions.length} instructions (${instructions.length - 2} ATA creation + 2 transfers)`);
 
-      // ============================================================
-      // KEY INTEGRATION: Use Sanctum Gateway's buildGatewayTransaction
-      // This optimizes the transaction with:
-      // - Simulation to determine optimal CU limit
-      // - Real-time priority fee fetching
-      // - Jito tip instructions for better delivery
-      // - Fresh blockhash management
-      // ============================================================
-      
+      // ... rest of your code remains the same
       const customerSigner = { address: customerWalletAddr };
       
-      // Build initial unsigned transaction with dummy blockhash
       const initialTransaction = pipe(
         createTransactionMessage({ version: 0 }),
         (txm) => appendTransactionMessageInstructions(instructions, txm),
@@ -140,10 +223,10 @@ export class PaymentExecutor {
       const buildResult = await this.gateway.buildGatewayTransaction(
         initialTransaction,
         {
-          skipSimulation: false,     // Let Gateway simulate and set CU limit
-          skipPriorityFee: false,    // Let Gateway fetch and set priority fees
-          cuPriceRange: "medium",    // Medium priority fees
-          jitoTipRange: "medium",    // Medium Jito tips
+          skipSimulation: false,
+          skipPriorityFee: false,
+          cuPriceRange: "medium",
+          jitoTipRange: "medium",
           deliveryMethodType: "rpc",
         }
       );
@@ -153,15 +236,7 @@ export class PaymentExecutor {
       );
       const base64Transaction = Buffer.from(optimizedTransactionBytes).toString('base64');
 
-      console.log('✅ Gateway-optimized transaction ready:');
-      console.log('   Blockhash:', buildResult.latestBlockhash.blockhash.slice(0, 8) + '...');
-      console.log('   Last Valid Block:', buildResult.latestBlockhash.lastValidBlockHeight);
-      console.log('   Transaction size:', optimizedTransactionBytes.length, 'bytes');
-      console.log('   Optimizations applied:');
-      console.log('     ✓ CU limit set via simulation');
-      console.log('     ✓ Priority fees fetched and applied');
-      console.log('     ✓ Jito tip instructions added');
-      console.log('     ✓ Fresh blockhash attached');
+      console.log('✅ Gateway-optimized transaction ready');
 
       return {
         txSignature: '',
