@@ -41,7 +41,7 @@ export default function HomePage() {
                   className="rounded-full"
                   asChild
                 >
-                  <a href="/dashboard/org/create">
+                  <a href="/sign-up">
                     Start Selling
                     <ArrowRight className="ml-2 h-5 w-5" />
                   </a>

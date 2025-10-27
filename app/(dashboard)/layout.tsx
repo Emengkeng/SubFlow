@@ -179,7 +179,7 @@ function Header() {
               Start Selling
             </Link>
             <Link 
-              href="https://github.com/Emengkeng/subflow" 
+              href="https://github.com/Emengkeng/SubFlow" 
               target="_blank"
               rel="noopener noreferrer"
               className="text-gray-700 hover:text-gray-900"

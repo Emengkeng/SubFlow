@@ -580,5 +580,5 @@ Sanctum enables developers to build production-grade payment systems on Solana w
 
 **Powered by Sanctum Gateway. Built on Solana. Made for Creators.**
 
-🚀 **Try it now:** [subflow.vercel.app](https://subflow.vercel.app)  
+🚀 **Try it now:** [subflow.vercel.app](https://sub-flow-phi.vercel.app/)  
 📖 **Documentation:** [docs.subflow.xyz](https://gateway.sanctum.so/docs)  
