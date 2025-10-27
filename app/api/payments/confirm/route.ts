@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
+import { 
+  createPurchase, 
   getPaymentSessionById,
-  updatePaymentSession,
-  createPayment,
-  updatePayment,
-  createPlatformRevenue,
-  getPlatformConfig,
-  createWebhook,
+  updatePaymentSession 
 } from '@/lib/db/payment-queries';
-import { SanctumGatewayClient } from '@/lib/solana/sanctum-gateway';
+import { PaymentExecutor } from '@/lib/solana/payment-executor';
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,7 +13,7 @@ export async function POST(request: NextRequest) {
 
     if (!sessionId || !txSignature) {
       return NextResponse.json(
-        { error: 'Missing required fields: sessionId, txSignature' },
+        { error: 'Missing required fields' },
         { status: 400 }
       );
     }
@@ -28,99 +24,52 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    if (session.status === 'completed') {
-      return NextResponse.json({ error: 'Session already completed' }, { status: 409 });
-    }
-
-    if (session.status === 'expired') {
-      return NextResponse.json({ error: 'Session expired' }, { status: 410 });
-    }
-
-    // Verify transaction on-chain
-    const gateway = new SanctumGatewayClient();
-    const confirmed = await gateway.confirmTransaction(txSignature, 30);
+    // Confirm payment on-chain
+    const executor = await PaymentExecutor.create();
+    const { confirmed, payment } = await executor.confirmPayment(sessionId, txSignature);
 
     if (!confirmed) {
       return NextResponse.json(
-        { error: 'Transaction not confirmed' },
+        { error: 'Payment confirmation failed' },
         { status: 400 }
       );
     }
 
-    // Create payment record
-    const payment = await createPayment({
-      sessionId: session.id,
+    // Create purchase record for digital product
+    const purchase = await createPurchase({
       productId: session.productId,
+      sessionId: session.id,
+      paymentId: payment.id,
       organizationId: session.organizationId,
-      merchantAmount: session.amount,
-      platformFee: session.platformFee,
-      totalAmount: session.totalAmount,
-      gasCost: '0', // Customer paid gas
+      customerWallet: session.customerWallet!,
+      customerEmail: session.customerEmail,
+      pricePaid: session.totalAmount,
       txSignature,
-      deliveryMethod: 'customer_signed',
+      maxDownloads: session.product.downloadLimit || 5,
+      metadata: session.metadata,
     });
 
-    // Update payment status
-    await updatePayment(payment.id, {
-      status: 'confirmed',
-      slotConfirmed: Date.now(),
-    });
-
-    // Update session
+    // Update session status
     await updatePaymentSession(sessionId, {
       status: 'completed',
       txSignature,
       confirmedAt: new Date(),
     });
 
-    // Record platform revenue
-    const platformConfig = await getPlatformConfig();
-    if (platformConfig) {
-      await createPlatformRevenue({
-        paymentId: payment.id,
-        organizationId: session.organizationId,
-        feeAmount: session.platformFee,
-        merchantAmount: session.amount,
-        totalAmount: session.totalAmount,
-        gasCost: '0',
-        txSignature,
-      });
-    }
-
-    // Send webhook
-    await createWebhook({
-      organizationId: session.organizationId,
-      eventType: 'payment.succeeded',
-      payload: {
-        paymentId: payment.id,
-        sessionId: session.id,
-        productId: session.productId,
-        productName: session.product.name,
-        customerWallet: session.customerWallet,
-        customerEmail: session.customerEmail,
-        amount: session.amount,
-        displayAmount: `$${(parseFloat(session.amount) / Math.pow(10, session.tokenDecimals)).toFixed(2)}`,
-        txSignature,
-        metadata: session.metadata,
-      },
-    });
+    console.log('✅ Purchase created:', purchase.id);
 
     return NextResponse.json({
       success: true,
-      payment: {
-        id: payment.id,
-        sessionId: session.id,
-        status: 'confirmed',
-        txSignature,
-        merchantAmount: session.amount,
-        platformFee: session.platformFee,
-        totalAmount: session.totalAmount,
-        confirmedAt: new Date(),
+      payment,
+      purchase: {
+        id: purchase.id,
+        productId: purchase.productId,
+        downloadCount: purchase.downloadCount,
+        maxDownloads: purchase.maxDownloads,
       },
-      message: 'Payment confirmed successfully',
     });
   } catch (error: any) {
-    console.error('Confirm payment error:', error);
+    console.error('Payment confirmation error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

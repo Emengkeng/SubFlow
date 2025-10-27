@@ -75,7 +75,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const personalNavItems = [
     { href: '/dashboard', icon: Users, label: 'Team' },
     { href: '/dashboard/general', icon: Settings, label: 'General' },
-    // { href: '/dashboard/subscriptions', icon: Calendar, label: 'My Subscriptions' },
+    { href: '/dashboard/my-purchase', icon: Calendar, label: 'My Purchase' },
     { href: '/dashboard/activity', icon: Activity, label: 'Activity' },
     { href: '/dashboard/security', icon: Shield, label: 'Security' }
   ];

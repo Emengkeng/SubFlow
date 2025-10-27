@@ -8,6 +8,7 @@ import { db } from '@/lib/db/drizzle';
 import { teamMembers, teams } from '@/lib/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { getUser } from '@/lib/db/queries';
+import { generateUniqueSlug } from '@/lib/utils/slug';
 
 async function verifyOrgAccess(userId: number, orgId: string) {
   const access = await db
@@ -30,10 +31,9 @@ export async function GET(
   { params }: { params: { orgId: string } }
 ) {
   try {
-
     const user = await getUser();
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { orgId } = await params;
@@ -44,8 +44,8 @@ export async function GET(
     }
 
     const hasAccess = await verifyOrgAccess(user.id, orgId);
-      if (!hasAccess) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const products = await getProductsByOrganization(orgId);
@@ -69,8 +69,8 @@ export async function POST(
 ) {
   try {
     const user = await getUser();
-      if (!user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { orgId } = await params;
@@ -81,23 +81,31 @@ export async function POST(
     }
 
     const hasAccess = await verifyOrgAccess(user.id, orgId);
-      if (!hasAccess) {
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    if (!hasAccess) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     const body = await request.json();
     const {
       name,
+      slug,
       description,
       price,
       tokenMint,
       tokenDecimals = 6,
       merchantWallet,
       imageUrl,
+      previewUrl,
+      thumbnailUrl,
       metadata,
+      productType = 'digital',
+      downloadLimit = 5,
+      linkExpiryHours = 24,
+      categoryId,
+      tags = [],
+      isFeatured = false,
     } = body;
 
-    // Validation
     if (!name || !price || !merchantWallet) {
       return NextResponse.json(
         { error: 'Missing required fields: name, price, merchantWallet' },
@@ -105,17 +113,27 @@ export async function POST(
       );
     }
 
-    // Create product
+    const productSlug = generateUniqueSlug(name, 6);
+
     const product = await createProduct({
       organizationId: orgId,
       name,
+      slug: productSlug,
       description,
       price,
-      tokenMint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+      tokenMint: 'Gh9ZwEmdLJ8DscKNTkTqPbNwLNNBjuSzaG9Vp2KGtKJr',
       tokenDecimals,
       merchantWallet,
       imageUrl,
+      previewUrl,
+      thumbnailUrl,
       metadata,
+      productType,
+      downloadLimit,
+      linkExpiryHours,
+      categoryId,
+      tags,
+      isFeatured,
     });
 
     return NextResponse.json({

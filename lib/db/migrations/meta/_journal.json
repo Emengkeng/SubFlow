@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1761139929365,
-      "tag": "0000_magenta_sugar_man",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1761338288361,
-      "tag": "0001_tiny_valkyrie",
+      "when": 1761378324373,
+      "tag": "0000_orange_talon",
       "breakpoints": true
     }
   ]

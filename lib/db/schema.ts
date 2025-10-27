@@ -86,10 +86,6 @@ export const invitations = pgTable('invitations', {
 });
 
 
-// ============================================================================
-// PAYMENT SYSTEM TABLES (Refactored)
-// ============================================================================
-
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: varchar('name', { length: 255 }).notNull(),
@@ -112,20 +108,84 @@ export const products = pgTable('products', {
   organizationId: uuid('organization_id')
     .notNull()
     .references(() => organizations.id, { onDelete: 'cascade' }),
+  
+  // Category (NEW)
+  categoryId: uuid('category_id')
+    .references(() => categories.id, { onDelete: 'set null' }),
+  
+  // Basic info
   name: varchar('name', { length: 255 }).notNull(),
+  slug: varchar('slug', { length: 255 }).notNull(), //URL-friendly name
   description: text('description'),
-  price: numeric('price', { precision: 20, scale: 0 }).notNull(), // In smallest token unit
-  tokenMint: varchar('token_mint', { length: 44 }).notNull(), // USDC, SOL, etc
+  price: numeric('price', { precision: 20, scale: 0 }).notNull(),
+  
+  // Payment details
+  tokenMint: varchar('token_mint', { length: 44 }).notNull(),
   tokenDecimals: integer('token_decimals').notNull().default(6),
-  merchantWallet: varchar('merchant_wallet', { length: 44 }).notNull(), // Where to send funds
+  merchantWallet: varchar('merchant_wallet', { length: 44 }).notNull(),
+  
+  // Digital product specifics
+  productType: varchar('product_type', { length: 50 }).notNull().default('digital'),
+  fileSize: integer('file_size'), // in bytes
+  fileType: varchar('file_type', { length: 100 }),
+  downloadLimit: integer('download_limit').default(5),
+  linkExpiryHours: integer('link_expiry_hours').default(24),
+  
+  // Media
   imageUrl: text('image_url'),
-  metadata: jsonb('metadata'), // Custom fields
+  previewUrl: text('preview_url'),
+  thumbnailUrl: text('thumbnail_url'), // Smaller image for listings
+  
+  // Storage reference
+  supabaseFileId: varchar('supabase_file_id', { length: 255 }),
+  supabaseBucket: varchar('supabase_bucket', { length: 255 }).default('digital-products'),
+  
+  // SEO & Discovery (NEW)
+  tags: jsonb('tags').$type<string[]>(), // ['javascript', 'react', 'tutorial']
+  searchVector: text('search_vector'), // For full-text search
+  
+  // Stats (NEW)
+  viewCount: integer('view_count').default(0),
+  purchaseCount: integer('purchase_count').default(0),
+  rating: numeric('rating', { precision: 3, scale: 2 }).default('0'), // Average rating
+  reviewCount: integer('review_count').default(0),
+  
+  // Metadata
+  metadata: jsonb('metadata'),
+  isActive: boolean('is_active').default(true),
+  isFeatured: boolean('is_featured').default(false), // NEW: Featured products
+  
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  publishedAt: timestamp('published_at'), // NEW: When product was published
+}, (table) => ({
+  orgIdx: index('products_org_idx').on(table.organizationId),
+  categoryIdx: index('products_category_idx').on(table.categoryId),
+  activeIdx: index('products_active_idx').on(table.isActive),
+  typeIdx: index('products_type_idx').on(table.productType),
+  slugIdx: index('products_slug_idx').on(table.slug),
+  featuredIdx: index('products_featured_idx').on(table.isFeatured),
+  purchaseCountIdx: index('products_purchase_count_idx').on(table.purchaseCount),
+  // For full-text search
+  searchIdx: index('products_search_idx').on(table.searchVector),
+}));
+
+export const categories = pgTable('categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 100 }).notNull(),
+  slug: varchar('slug', { length: 100 }).notNull().unique(),
+  description: text('description'),
+  icon: varchar('icon', { length: 50 }), // Icon name (lucide-react)
+  imageUrl: text('image_url'),
+  parentId: uuid('parent_id'), // For sub-categories
+  displayOrder: integer('display_order').default(0),
   isActive: boolean('is_active').default(true),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 }, (table) => ({
-  orgIdx: index('products_org_idx').on(table.organizationId),
-  activeIdx: index('products_active_idx').on(table.isActive),
+  slugIdx: index('categories_slug_idx').on(table.slug),
+  parentIdx: index('categories_parent_idx').on(table.parentId),
+  activeIdx: index('categories_active_idx').on(table.isActive),
 }));
 
 export const paymentSessions = pgTable('payment_sessions', {
@@ -279,6 +339,78 @@ export const platformRevenue = pgTable('platform_revenue', {
   txSignature: varchar('tx_signature', { length: 128 }),
   createdAt: timestamp('created_at').notNull().defaultNow(),
 });
+
+export const purchases = pgTable('purchases', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  
+  // References
+  productId: uuid('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
+  sessionId: uuid('session_id')
+    .notNull()
+    .references(() => paymentSessions.id, { onDelete: 'cascade' }),
+  paymentId: uuid('payment_id')
+    .references(() => payments.id, { onDelete: 'set null' }),
+  organizationId: uuid('organization_id')
+    .notNull()
+    .references(() => organizations.id),
+  
+  // Customer info
+  customerWallet: varchar('customer_wallet', { length: 44 }).notNull(),
+  customerEmail: varchar('customer_email', { length: 255 }),
+  
+  // Purchase details
+  pricePaid: numeric('price_paid', { precision: 20, scale: 0 }).notNull(),
+  txSignature: varchar('tx_signature', { length: 128 }).notNull(),
+  
+  // Download tracking
+  downloadCount: integer('download_count').default(0),
+  maxDownloads: integer('max_downloads').notNull(), // Snapshot from product at time of purchase
+  lastDownloadAt: timestamp('last_download_at'),
+  
+  // Status
+  status: varchar('status', { length: 50 }).notNull().default('completed'), // completed, refunded, disputed
+  
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => ({
+  productIdx: index('purchases_product_idx').on(table.productId),
+  customerIdx: index('purchases_customer_idx').on(table.customerWallet),
+  txIdx: index('purchases_tx_idx').on(table.txSignature),
+}));
+
+export const downloadLinks = pgTable('download_links', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  
+  // References
+  purchaseId: uuid('purchase_id')
+    .notNull()
+    .references(() => purchases.id, { onDelete: 'cascade' }),
+  productId: uuid('product_id')
+    .notNull()
+    .references(() => products.id, { onDelete: 'cascade' }),
+  
+  // Security
+  token: varchar('token', { length: 128 }).notNull().unique(), // Secure random token
+  customerWallet: varchar('customer_wallet', { length: 44 }).notNull(),
+  
+  // Expiry
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  
+  // Usage tracking
+  isUsed: boolean('is_used').default(false),
+  usedAt: timestamp('used_at'),
+  ipAddress: varchar('ip_address', { length: 45 }),
+  userAgent: text('user_agent'),
+}, (table) => ({
+  tokenIdx: index('download_links_token_idx').on(table.token),
+  customerIdx: index('download_links_customer_idx').on(table.customerWallet),
+  expiresIdx: index('download_links_expires_idx').on(table.expiresAt),
+}));
+
 
 export const subscriptionPlans = pgTable('subscription_plans', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -462,15 +594,6 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   webhooks: many(webhooks),
 }));
 
-export const productsRelations = relations(products, ({ one, many }) => ({
-  organization: one(organizations, {
-    fields: [products.organizationId],
-    references: [organizations.id],
-  }),
-  paymentSessions: many(paymentSessions),
-  payments: many(payments),
-}));
-
 export const paymentsRelations = relations(payments, ({ one }) => ({
   session: one(paymentSessions, {
     fields: [payments.sessionId],
@@ -519,6 +642,68 @@ export const deadLetterQueueRelations = relations(deadLetterQueue, ({ one }) => 
     references: [payments.id],
   }),
 }));
+
+
+
+export const productsRelations = relations(products, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [products.organizationId],
+    references: [organizations.id],
+  }),
+  category: one(categories, {
+    fields: [products.categoryId],
+    references: [categories.id],
+  }),
+  purchases: many(purchases),
+  paymentSessions: many(paymentSessions),
+}));
+
+export const purchasesRelations = relations(purchases, ({ one, many }) => ({
+  product: one(products, {
+    fields: [purchases.productId],
+    references: [products.id],
+  }),
+  session: one(paymentSessions, {
+    fields: [purchases.sessionId],
+    references: [paymentSessions.id],
+  }),
+  payment: one(payments, {
+    fields: [purchases.paymentId],
+    references: [payments.id],
+  }),
+  organization: one(organizations, {
+    fields: [purchases.organizationId],
+    references: [organizations.id],
+  }),
+  downloadLinks: many(downloadLinks),
+}));
+
+export const downloadLinksRelations = relations(downloadLinks, ({ one }) => ({
+  purchase: one(purchases, {
+    fields: [downloadLinks.purchaseId],
+    references: [purchases.id],
+  }),
+  product: one(products, {
+    fields: [downloadLinks.productId],
+    references: [products.id],
+  }),
+}));
+
+export const categoriesRelations = relations(categories, ({ one, many }) => ({
+  parent: one(categories, {
+    fields: [categories.parentId],
+    references: [categories.id],
+    relationName: 'parentCategory',
+  }),
+  children: many(categories, {
+    relationName: 'parentCategory',
+  }),
+  products: many(products),
+}));
+
+
+
+
 
 export const subscriptionPlansRelations = relations(subscriptionPlans, ({ one, many }) => ({
   organization: one(organizations, {
@@ -588,6 +773,14 @@ export type Subscription = typeof subscriptions.$inferSelect;
 export type NewSubscription = typeof subscriptions.$inferInsert;
 export type SubscriptionPayment = typeof subscriptionPayments.$inferSelect;
 export type NewSubscriptionPayment = typeof subscriptionPayments.$inferInsert;
+
+
+export type Purchase = typeof purchases.$inferSelect;
+export type NewPurchase = typeof purchases.$inferInsert;
+export type DownloadLink = typeof downloadLinks.$inferSelect;
+export type NewDownloadLink = typeof downloadLinks.$inferInsert;
+export type Category = typeof categories.$inferSelect;
+export type NewCategory = typeof categories.$inferInsert;
 
 export enum SubscriptionStatus {
   PENDING_APPROVAL = 'pending_approval',

@@ -1,4 +1,4 @@
-import { desc, and, eq, lte, sql, inArray } from 'drizzle-orm';
+import { desc, and, eq, lte, sql, inArray, gte, asc, isNull } from 'drizzle-orm';
 import { db } from './drizzle';
 import {
   organizations,
@@ -19,6 +19,9 @@ import {
   type Payment,
   type Subscription,
   type SubscriptionPlan,
+  purchases,
+  downloadLinks,
+  categories,
 } from './schema';
 
 // ============================================================================
@@ -65,19 +68,51 @@ export async function getOrganizationById(orgId: string) {
 export async function createProduct(data: {
   organizationId: string;
   name: string;
+  slug: string;
   description?: string;
   price: string;
   tokenMint: string;
   tokenDecimals?: number;
   merchantWallet: string;
   imageUrl?: string;
+  previewUrl?: string;
+  thumbnailUrl?: string;
   metadata?: any;
+  productType?: string;
+  fileSize?: number;
+  fileType?: string;
+  downloadLimit?: number;
+  linkExpiryHours?: number;
+  supabaseFileId?: string;
+  supabaseBucket?: string;
+  categoryId?: string;
+  tags?: string[];
+  searchVector?: string;
+  viewCount?: number;
+  purchaseCount?: number;
+  rating?: string;
+  reviewCount?: number;
+  isActive?: boolean;
+  isFeatured?: boolean;
+  publishedAt?: Date;
 }) {
   const result = await db
     .insert(products)
     .values({
       ...data,
       tokenDecimals: data.tokenDecimals || 6,
+      productType: data.productType || 'digital',
+      downloadLimit: data.downloadLimit || 5,
+      linkExpiryHours: data.linkExpiryHours || 24,
+      supabaseBucket: data.supabaseBucket || 'digital-products',
+      isActive: data.isActive ?? true,
+      isFeatured: data.isFeatured ?? false,
+      viewCount: data.viewCount || 0,
+      purchaseCount: data.purchaseCount || 0,
+      rating: data.rating || '0',
+      reviewCount: data.reviewCount || 0,
+      // Auto-set publishedAt if active
+      publishedAt: data.isActive !== false ? new Date() : data.publishedAt,
     })
     .returning();
 
@@ -996,4 +1031,570 @@ export async function getCustomerStats(walletAddress: string) {
     );
 
   return result[0];
+}
+
+// ============================================================================
+// PURCHASE QUERIES
+// ============================================================================
+
+export async function createPurchase(data: {
+  productId: string;
+  sessionId: string;
+  paymentId: string;
+  organizationId: string;
+  customerWallet: string;
+  customerEmail: string | null;
+  pricePaid: string;
+  txSignature: string;
+  maxDownloads: number;
+  metadata?: any;
+}) {
+  const result = await db
+    .insert(purchases)
+    .values({
+      ...data,
+      status: 'completed',
+    })
+    .returning();
+
+  return result[0];
+}
+
+export async function getPurchaseById(purchaseId: string) {
+  const result = await db.query.purchases.findFirst({
+    where: eq(purchases.id, purchaseId),
+    with: {
+      product: {
+        with: {
+          organization: true,
+        },
+      },
+      downloadLinks: {
+        orderBy: [desc(downloadLinks.createdAt)],
+        limit: 5,
+      },
+    },
+  });
+
+  return result || null;
+}
+
+export async function getPurchasesByWallet(walletAddress: string, limit = 50) {
+  return await db.query.purchases.findMany({
+    where: eq(purchases.customerWallet, walletAddress),
+    with: {
+      product: {
+        with: {
+          organization: true,
+        },
+      },
+      downloadLinks: {
+        orderBy: [desc(downloadLinks.createdAt)],
+        limit: 1,
+      },
+    },
+    orderBy: [desc(purchases.createdAt)],
+    limit,
+  });
+}
+
+export async function getPurchaseByTxSignature(txSignature: string) {
+  const result = await db.query.purchases.findFirst({
+    where: eq(purchases.txSignature, txSignature),
+    with: {
+      product: true,
+    },
+  });
+
+  return result || null;
+}
+
+export async function incrementDownloadCount(purchaseId: string) {
+  const result = await db
+    .update(purchases)
+    .set({
+      downloadCount: sql`${purchases.downloadCount} + 1`,
+      lastDownloadAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(purchases.id, purchaseId))
+    .returning();
+
+  return result[0];
+}
+
+// ============================================================================
+// DOWNLOAD LINK QUERIES
+// ============================================================================
+
+function generateSecureToken(): string {
+  return crypto.randomUUID().toString();
+}
+
+export async function createDownloadLink(data: {
+  purchaseId: string;
+  productId: string;
+  customerWallet: string;
+  expiryHours: number;
+}) {
+  const token = generateSecureToken();
+  const expiresAt = new Date();
+  expiresAt.setHours(expiresAt.getHours() + data.expiryHours);
+
+  const result = await db
+    .insert(downloadLinks)
+    .values({
+      purchaseId: data.purchaseId,
+      productId: data.productId,
+      customerWallet: data.customerWallet,
+      token,
+      expiresAt,
+    })
+    .returning();
+
+  return result[0];
+}
+
+export async function getDownloadLinkByToken(token: string) {
+  const result = await db.query.downloadLinks.findFirst({
+    where: eq(downloadLinks.token, token),
+    with: {
+      purchase: {
+        with: {
+          product: true,
+        },
+      },
+      product: true,
+    },
+  });
+
+  return result || null;
+}
+
+export async function markDownloadLinkAsUsed(
+  linkId: string,
+  ipAddress?: string,
+  userAgent?: string
+) {
+  const result = await db
+    .update(downloadLinks)
+    .set({
+      isUsed: true,
+      usedAt: new Date(),
+      ipAddress,
+      userAgent,
+    })
+    .where(eq(downloadLinks.id, linkId))
+    .returning();
+
+  return result[0];
+}
+
+export async function getActiveDownloadLink(
+  purchaseId: string,
+  customerWallet: string
+) {
+  const now = new Date();
+
+  const result = await db.query.downloadLinks.findFirst({
+    where: and(
+      eq(downloadLinks.purchaseId, purchaseId),
+      eq(downloadLinks.customerWallet, customerWallet),
+      gte(downloadLinks.expiresAt, now),
+      eq(downloadLinks.isUsed, false)
+    ),
+    orderBy: [desc(downloadLinks.createdAt)],
+  });
+
+  return result || null;
+}
+
+export async function cleanupExpiredLinks() {
+  const now = new Date();
+  
+  const result = await db
+    .delete(downloadLinks)
+    .where(lte(downloadLinks.expiresAt, now))
+    .returning();
+
+  return result.length;
+}
+
+// ============================================================================
+// PRODUCT QUERIES (Enhanced for Digital Products)
+// ============================================================================
+
+export async function updateProductFile(productId: string, data: {
+  supabaseFileId: string;
+  supabaseBucket: string;
+  fileSize: number;
+  fileType: string;
+}) {
+  const result = await db
+    .update(products)
+    .set({
+      ...data,
+      updatedAt: new Date(),
+    })
+    .where(eq(products.id, productId))
+    .returning();
+
+  return result[0];
+}
+
+export async function getProductsWithPurchaseInfo(walletAddress: string) {
+  // Get all products and join with user's purchases
+  const allProducts = await db.query.products.findMany({
+    where: eq(products.isActive, true),
+    with: {
+      organization: {
+        columns: {
+          id: true,
+          name: true,
+          logoUrl: true,
+        },
+      },
+    },
+  });
+
+  const userPurchases = await db.query.purchases.findMany({
+    where: eq(purchases.customerWallet, walletAddress),
+    columns: {
+      productId: true,
+    },
+  });
+
+  const purchasedProductIds = new Set(userPurchases.map(p => p.productId));
+
+  return allProducts.map(product => ({
+    ...product,
+    isPurchased: purchasedProductIds.has(product.id),
+    displayPrice: `$${(parseFloat(product.price) / Math.pow(10, product.tokenDecimals)).toFixed(2)}`,
+  }));
+}
+
+// ============================================================================
+// ANALYTICS
+// ============================================================================
+
+export async function getProductSalesStats(productId: string) {
+  const result = await db
+    .select({
+      totalSales: sql<number>`COUNT(*)::int`,
+      totalRevenue: sql<string>`COALESCE(SUM(${purchases.pricePaid}), 0)`,
+      totalDownloads: sql<number>`COALESCE(SUM(${purchases.downloadCount}), 0)::int`,
+    })
+    .from(purchases)
+    .where(
+      and(
+        eq(purchases.productId, productId),
+        eq(purchases.status, 'completed')
+      )
+    );
+
+  return result[0];
+}
+
+export async function getOrganizationSalesStats(organizationId: string) {
+  const result = await db
+    .select({
+      totalSales: sql<number>`COUNT(*)::int`,
+      totalRevenue: sql<string>`COALESCE(SUM(${purchases.pricePaid}), 0)`,
+      uniqueCustomers: sql<number>`COUNT(DISTINCT ${purchases.customerWallet})::int`,
+    })
+    .from(purchases)
+    .where(
+      and(
+        eq(purchases.organizationId, organizationId),
+        eq(purchases.status, 'completed')
+      )
+    );
+
+  return result[0];
+}
+
+export async function getTopSellingProducts(organizationId: string, limit = 10) {
+  return await db
+    .select({
+      product: products,
+      salesCount: sql<number>`COUNT(${purchases.id})::int`,
+      revenue: sql<string>`COALESCE(SUM(${purchases.pricePaid}), 0)`,
+    })
+    .from(products)
+    .leftJoin(purchases, eq(products.id, purchases.productId))
+    .where(eq(products.organizationId, organizationId))
+    .groupBy(products.id)
+    .orderBy(desc(sql`COUNT(${purchases.id})`))
+    .limit(limit);
+}
+
+export async function getAllCategories(includeInactive = false) {
+  const conditions = [];
+  
+  if (!includeInactive) {
+    conditions.push(eq(categories.isActive, true));
+  }
+
+  return await db.query.categories.findMany({
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+  });
+}
+
+export async function getTopLevelCategories(includeInactive = false) {
+  const conditions = [isNull(categories.parentId)];
+  
+  if (!includeInactive) {
+    conditions.push(eq(categories.isActive, true));
+  }
+
+  return await db.query.categories.findMany({
+    where: and(...conditions),
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+    with: {
+      children: {
+        where: includeInactive ? undefined : eq(categories.isActive, true),
+        orderBy: [asc(categories.displayOrder), asc(categories.name)],
+      },
+    },
+  });
+}
+
+export async function getCategoryBySlug(slug: string) {
+  const result = await db.query.categories.findFirst({
+    where: and(
+      eq(categories.slug, slug),
+      eq(categories.isActive, true)
+    ),
+    with: {
+      children: {
+        where: eq(categories.isActive, true),
+        orderBy: [asc(categories.displayOrder), asc(categories.name)],
+      },
+      parent: true,
+    },
+  });
+
+  return result || null;
+}
+
+export async function getCategoryById(categoryId: string) {
+  const result = await db.query.categories.findFirst({
+    where: eq(categories.id, categoryId),
+    with: {
+      children: {
+        orderBy: [asc(categories.displayOrder), asc(categories.name)],
+      },
+      parent: true,
+    },
+  });
+
+  return result || null;
+}
+
+export async function getSubCategories(parentId: string, includeInactive = false) {
+  const conditions = [eq(categories.parentId, parentId)];
+  
+  if (!includeInactive) {
+    conditions.push(eq(categories.isActive, true));
+  }
+
+  return await db.query.categories.findMany({
+    where: and(...conditions),
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+  });
+}
+
+export async function createCategory(data: {
+  name: string;
+  slug: string;
+  description?: string;
+  icon?: string;
+  imageUrl?: string;
+  parentId?: string;
+  displayOrder?: number;
+  isActive?: boolean;
+}) {
+  const result = await db
+    .insert(categories)
+    .values({
+      ...data,
+      displayOrder: data.displayOrder || 0,
+      isActive: data.isActive ?? true,
+    })
+    .returning();
+
+  return result[0];
+}
+
+export async function updateCategory(
+  categoryId: string,
+  data: Partial<typeof categories.$inferInsert>
+) {
+  const result = await db
+    .update(categories)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(categories.id, categoryId))
+    .returning();
+
+  return result[0];
+}
+
+export async function deleteCategory(categoryId: string) {
+  // Soft delete by setting isActive to false
+  const result = await db
+    .update(categories)
+    .set({ isActive: false, updatedAt: new Date() })
+    .where(eq(categories.id, categoryId))
+    .returning();
+
+  return result[0];
+}
+
+export async function getCategoryWithProductCount(categoryId: string) {
+  const category = await db.query.categories.findFirst({
+    where: eq(categories.id, categoryId),
+    with: {
+      products: {
+        where: and(
+          eq(products.isActive, true),
+          eq(products.categoryId, categoryId)
+        ),
+        columns: { id: true },
+      },
+    },
+  });
+
+  if (!category) return null;
+
+  return {
+    ...category,
+    productCount: category.products?.length || 0,
+  };
+}
+
+export async function getAllCategoriesWithProductCounts() {
+  const allCategories = await db.query.categories.findMany({
+    where: eq(categories.isActive, true),
+    orderBy: [asc(categories.displayOrder), asc(categories.name)],
+    with: {
+      products: {
+        where: eq(products.isActive, true),
+        columns: { id: true },
+      },
+    },
+  });
+
+  return allCategories.map(cat => ({
+    id: cat.id,
+    name: cat.name,
+    slug: cat.slug,
+    description: cat.description,
+    icon: cat.icon,
+    imageUrl: cat.imageUrl,
+    parentId: cat.parentId,
+    displayOrder: cat.displayOrder,
+    isActive: cat.isActive,
+    productCount: cat.products?.length || 0,
+    createdAt: cat.createdAt,
+    updatedAt: cat.updatedAt,
+  }));
+}
+
+export async function getProductsByCategory(
+  categorySlugOrId: string,
+  limit = 50
+) {
+  // Try to find by slug first, then by ID
+  const category = await db.query.categories.findFirst({
+    where: sql`${categories.slug} = ${categorySlugOrId} OR ${categories.id} = ${categorySlugOrId}`,
+  });
+
+  if (!category) return [];
+
+  return await db.query.products.findMany({
+    where: and(
+      eq(products.categoryId, category.id),
+      eq(products.isActive, true)
+    ),
+    with: {
+      organization: {
+        columns: {
+          id: true,
+          name: true,
+          logoUrl: true,
+        },
+      },
+    },
+    orderBy: [desc(products.purchaseCount), desc(products.createdAt)],
+    limit,
+  });
+}
+
+/**
+ * Get product by slug (works with unique slugs like "react-course-a3f9k2")
+ */
+export async function getProductBySlug(slug: string) {
+  const result = await db.query.products.findFirst({
+    where: and(eq(products.slug, slug), eq(products.isActive, true)),
+    with: {
+      organization: true,
+      category: true,
+    },
+  });
+
+  return result || null;
+}
+
+/**
+ * Get product by ID or slug (tries both)
+ */
+export async function getProductByIdOrSlug(identifier: string) {
+  // Try by ID first (UUID format)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  
+  if (uuidRegex.test(identifier)) {
+    const product = await getProductById(identifier);
+    if (product) return product;
+  }
+  
+  // Try by slug
+  return await getProductBySlug(identifier);
+}
+
+/**
+ * Check if a slug already exists
+ */
+export async function slugExists(slug: string): Promise<boolean> {
+  const result = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(eq(products.slug, slug))
+    .limit(1);
+
+  return result.length > 0;
+}
+
+/**
+ * Generate a guaranteed unique slug
+ */
+export async function generateUniqueProductSlug(baseName: string): Promise<string> {
+  const { generateUniqueSlug } = await import('@/lib/utils/slug');
+  
+  let attempts = 0;
+  const maxAttempts = 10;
+  
+  while (attempts < maxAttempts) {
+    const slug = generateUniqueSlug(baseName, 6);
+    const exists = await slugExists(slug);
+    
+    if (!exists) {
+      return slug;
+    }
+    
+    attempts++;
+  }
+  
+  // Fallback: use longer suffix
+  return generateUniqueSlug(baseName, 8);
 }
