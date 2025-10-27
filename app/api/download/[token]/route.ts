@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { 
   getDownloadLinkByToken,
@@ -8,7 +7,7 @@ import { SupabaseStorageService } from '@/lib/storage/supabase-storage';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { token: string } }
+  { params }: { params: Promise<{ token: string }> }
 ) {
   try {
     const { token } = await params;
