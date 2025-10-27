@@ -3,7 +3,7 @@ import { getPurchasesByWallet } from '@/lib/db/payment-queries';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { wallet: string } }
+  { params }: { params: Promise<{ wallet: string }> }
 ) {
   try {
     const { wallet } = await params;

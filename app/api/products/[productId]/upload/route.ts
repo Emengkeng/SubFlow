@@ -5,7 +5,7 @@ import { SupabaseStorageService } from '@/lib/storage/supabase-storage';
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { productId: string } }
+  { params }: { params: Promise<{ productId: string }> }
 ) {
   try {
     const user = await getUser();

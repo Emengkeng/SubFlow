@@ -3,10 +3,11 @@ import { getPaymentSessionById } from '@/lib/db/payment-queries';
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { sessionId: string } }
+  { params }: { params: Promise<{ sessionId: string }> }
 ) {
   try {
-    const session = await getPaymentSessionById(params.sessionId);
+    const { sessionId } = await params;
+    const session = await getPaymentSessionById(sessionId);
 
     if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
