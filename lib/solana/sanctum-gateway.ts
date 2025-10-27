@@ -16,13 +16,20 @@ import {
 } from "@solana/kit";
 import { getBase64Encoder } from "@solana/codecs-strings";
 
+// const CONFIG = {
+//   GATEWAY_URL: process.env.NODE_ENV == "development" 
+//     ? `https://tpg.sanctum.so/v1/devnet?apiKey=${process.env.GATEWAY_API_KEY}` 
+//     : `https://tpg.sanctum.so/v1/mainnet?apiKey=${process.env.GATEWAY_API_KEY}`,
+//   RPC_URL: process.env.NODE_ENV == "development" 
+//     ? "https://api.devnet.solana.com" 
+//     : "https://api.mainnet-beta.solana.com",
+//   JITO_TIP_RANGE: "medium" as const,
+//   CU_PRICE_MULTIPLIER: 1.2,
+// };
+
 const CONFIG = {
-  GATEWAY_URL: process.env.NODE_ENV == "development" 
-    ? `https://tpg.sanctum.so/v1/devnet?apiKey=${process.env.GATEWAY_API_KEY}` 
-    : `https://tpg.sanctum.so/v1/mainnet?apiKey=${process.env.GATEWAY_API_KEY}`,
-  RPC_URL: process.env.NODE_ENV == "development" 
-    ? "https://api.devnet.solana.com" 
-    : "https://api.mainnet-beta.solana.com",
+  GATEWAY_URL: `https://tpg.sanctum.so/v1/devnet?apiKey=${process.env.GATEWAY_API_KEY}` ,
+  RPC_URL: "https://api.devnet.solana.com",
   JITO_TIP_RANGE: "medium" as const,
   CU_PRICE_MULTIPLIER: 1.2,
 };
