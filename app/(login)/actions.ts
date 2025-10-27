@@ -480,13 +480,17 @@ export const inviteTeamMember = validatedActionWithUser(
       return { error: 'An invitation has already been sent to this email' };
     }
 
+    // Generate a secure token for the invitation
+    const invitationToken = crypto.randomBytes(32).toString('hex');
+
     // Create a new invitation
     await db.insert(invitations).values({
       teamId: userWithTeam.teamId,
       email,
       role,
       invitedBy: user.id,
-      status: 'pending'
+      status: 'pending',
+      token: invitationToken, // Add the required token field
     });
 
     await logActivity(
@@ -495,8 +499,8 @@ export const inviteTeamMember = validatedActionWithUser(
       ActivityType.INVITE_TEAM_MEMBER
     );
 
-    // TODO: Send invitation email and include ?inviteId={id} to sign-up URL
-    // await sendInvitationEmail(email, userWithTeam.team.name, role)
+    // TODO: Send invitation email and include ?inviteId={id}&token={token} to sign-up URL
+    // await sendInvitationEmail(email, userWithTeam.team.name, role, invitationToken)
 
     return { success: 'Invitation sent successfully' };
   }
