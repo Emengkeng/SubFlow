@@ -131,7 +131,7 @@ export default function ProductDetailPage() {
       console.error('Check purchase status error:', err);
     }
   };
-
+  
   const handlePurchase = async () => {
     if (purchaseInProgress.current) return;
     if (!connected || !publicKey || !signTransaction) {
@@ -150,8 +150,9 @@ export default function ProductDetailPage() {
     let sessionId: string | null = null;
 
     try {
-      console.log('🚀 Starting purchase flow...');
+      console.log('🚀 Starting purchase flow with Sanctum Gateway...');
 
+      //Create session and get Gateway-optimized transaction
       const sessionResponse = await fetch('/api/payments/create-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -175,46 +176,47 @@ export default function ProductDetailPage() {
       const sessionData = await sessionResponse.json();
       sessionId = sessionData.session.id;
 
+      console.log('✅ Session created:', sessionId);
+      console.log('   Transaction optimized by Sanctum Gateway buildGatewayTransaction');
+
+      // Deserialize the Gateway-optimized transaction
       const transactionBuffer = Buffer.from(sessionData.transaction, 'base64');
       const transaction = VersionedTransaction.deserialize(transactionBuffer);
 
-      const signedTransaction = await signTransaction(transaction);
+      console.log('📝 Transaction deserialized, requesting signature from wallet...');
 
+      // Customer signs the optimized transaction
+      const signedTransaction = await signTransaction(transaction);
+      
+      console.log('✅ Transaction signed by customer');
+
+      // Send signed transaction to backend for Gateway delivery
+      console.log('📤 Sending to Sanctum Gateway for multi-path delivery...');
+      
       const sendResponse = await fetch('/api/payments/send-transaction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          sessionId: sessionData.session.id,
+          sessionId: sessionId,
           signedTransaction: Buffer.from(signedTransaction.serialize()).toString('base64'),
         }),
       });
 
       if (!sendResponse.ok) {
-        throw new Error('Failed to send transaction');
+        const errorData = await sendResponse.json();
+        throw new Error(errorData.error || 'Failed to send transaction');
       }
 
-      const { signature } = await sendResponse.json();
-
-      // const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL || 'https://api.devnet.solana.com';
-      // const connection = new Connection(rpcUrl, {
-      //   commitment: 'confirmed',
-      //   confirmTransactionInitialTimeout: 60000,
-      // });
-
-      // const signature = await sendTransaction(transaction, connection, {
-      //   skipPreflight: false,
-      //   preflightCommitment: 'confirmed',
-      //   maxRetries: 2,
-      // });
-
+      const { signature, deliveryMethod } = await sendResponse.json();
       setTxSignature(signature);
 
-      // const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      console.log('✅ Transaction sent via Sanctum Gateway:');
+      console.log('   Signature:', signature);
+      console.log('   Delivery Method:', deliveryMethod);
 
-      // if (confirmation.value.err) {
-      //   throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-      // }
-
+      // Wait for confirmation (Gateway handles this internally)
+      console.log('⏳ Waiting for blockchain confirmation...');
+      
       const confirmResponse = await fetch('/api/payments/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -228,7 +230,11 @@ export default function ProductDetailPage() {
         const confirmData = await confirmResponse.json();
         setPurchase(confirmData.purchase);
         setSuccess(true);
+        console.log('🎉 Purchase completed successfully!');
+      } else {
+        throw new Error('Payment confirmation failed');
       }
+
     } catch (err: any) {
       console.error('❌ Purchase failed:', err);
       
