@@ -175,8 +175,8 @@ export class SanctumGatewayClient {
    */
   async sendTransaction(signedTransactionBytes: Uint8Array): Promise<{
     signature: string;
-    deliveryMethod: string;
-    slot?: number;
+    // deliveryMethod: string;
+    // slot?: number;
   }> {
     const sendId = `send-${Date.now()}`;
     
@@ -208,27 +208,31 @@ export class SanctumGatewayClient {
       throw new Error(`Gateway error: ${data.error.message}`);
     }
 
-    console.log("📊 Gateway delivery results:", data.result);
+    console.log("📊 Gateway delivery results:", data);
+
+    return {
+      signature: data.result,
+    };
 
     // Gateway returns results from multiple delivery methods
     // Find the first successful delivery
-    const deliveryResults = data.result;
-    for (const [method, results] of Object.entries(deliveryResults)) {
-      const resultArray = results as any[];
-      if (resultArray[0]?.result) {
-        console.log(`✅ Transaction delivered via: ${method}`);
-        console.log(`   Signature: ${resultArray[0].result}`);
-        console.log(`   Slot: ${resultArray[0].slot || 'N/A'}`);
+    // const deliveryResults = data.result;
+    // for (const [method, results] of Object.entries(deliveryResults)) {
+    //   const resultArray = results as any[];
+    //   if (resultArray[0]?.result) {
+    //     console.log(`✅ Transaction delivered via: ${method}`);
+    //     console.log(`   Signature: ${resultArray[0].result}`);
+    //     console.log(`   Slot: ${resultArray[0].slot || 'N/A'}`);
         
-        return {
-          signature: resultArray[0].result,
-          deliveryMethod: method,
-          slot: resultArray[0].slot,
-        };
-      }
-    }
+    //     return {
+    //       signature: resultArray[0].result,
+    //       deliveryMethod: method,
+    //       slot: resultArray[0].slot,
+    //     };
+    //   }
+    // }
 
-    throw new Error("No successful delivery method");
+    // throw new Error("No successful delivery method");
   }
 
   async getLatestBlockhash() {

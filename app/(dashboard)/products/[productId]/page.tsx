@@ -207,12 +207,12 @@ export default function ProductDetailPage() {
         throw new Error(errorData.error || 'Failed to send transaction');
       }
 
-      const { signature, deliveryMethod } = await sendResponse.json();
+      const { signature } = await sendResponse.json();
       setTxSignature(signature);
 
       console.log('✅ Transaction sent via Sanctum Gateway:');
       console.log('   Signature:', signature);
-      console.log('   Delivery Method:', deliveryMethod);
+      // console.log('   Delivery Method:', deliveryMethod);
 
       // Wait for confirmation (Gateway handles this internally)
       console.log('⏳ Waiting for blockchain confirmation...');

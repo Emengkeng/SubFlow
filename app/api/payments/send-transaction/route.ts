@@ -46,14 +46,14 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ Transaction sent via Sanctum Gateway:');
     console.log('   Signature:', result.signature);
-    console.log('   Delivery Method:', result.deliveryMethod);
-    console.log('   Slot:', result.slot || 'N/A');
+    // console.log('   Delivery Method:', result.deliveryMethod);
+    // console.log('   Slot:', result.slot || 'N/A');
 
     return NextResponse.json({
       success: true,
       signature: result.signature,
-      deliveryMethod: result.deliveryMethod,
-      slot: result.slot,
+    //   deliveryMethod: result.deliveryMethod,
+    //   slot: result.slot,
       message: 'Transaction sent successfully via Sanctum Gateway',
     });
 
