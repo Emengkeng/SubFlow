@@ -8,7 +8,7 @@ import {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { purchaseId: string } }
+  { params }: { params: Promise<{ purchaseId: string }> }
 ) {
   try {
     const { purchaseId } = await params;

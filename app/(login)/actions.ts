@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db/drizzle';
 import {
-  User,
   users,
   teams,
   teamMembers,
@@ -25,14 +24,14 @@ import { createCheckoutSession } from '@/lib/payments/stripe';
 import { getUser, getUserWithTeam } from '@/lib/db/queries';
 import {
   validatedAction,
-  validatedActionWithUser
+  validatedActionWithUser,
+  type AuthenticatedUser
 } from '@/lib/auth/middleware';
 import crypto from 'crypto';
 
 function generateApiKey(): string {
   return `sk_${crypto.randomBytes(32).toString('hex')}`;
 }
-
 
 async function logActivity(
   teamId: number | null | undefined,
@@ -266,7 +265,11 @@ export const signUp = validatedAction(signUpSchema, async (data, formData) => {
 });
 
 export async function signOut() {
-  const user = (await getUser()) as User;
+  const user = await getUser();
+  if (!user) {
+    redirect('/sign-in');
+  }
+  
   const userWithTeam = await getUserWithTeam(user.id);
   await logActivity(userWithTeam?.teamId, user.id, ActivityType.SIGN_OUT);
   (await cookies()).delete('session');
@@ -280,12 +283,23 @@ const updatePasswordSchema = z.object({
 
 export const updatePassword = validatedActionWithUser(
   updatePasswordSchema,
-  async (data, _, user) => {
+  async (data, _, user: AuthenticatedUser) => {
     const { currentPassword, newPassword, confirmPassword } = data;
+
+    // Fetch full user with passwordHash
+    const [fullUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1);
+
+    if (!fullUser) {
+      return { error: 'User not found.' };
+    }
 
     const isPasswordValid = await comparePasswords(
       currentPassword,
-      user.passwordHash
+      fullUser.passwordHash
     );
 
     if (!isPasswordValid) {
@@ -338,10 +352,21 @@ const deleteAccountSchema = z.object({
 
 export const deleteAccount = validatedActionWithUser(
   deleteAccountSchema,
-  async (data, _, user) => {
+  async (data, _, user: AuthenticatedUser) => {
     const { password } = data;
 
-    const isPasswordValid = await comparePasswords(password, user.passwordHash);
+    // Fetch full user with passwordHash
+    const [fullUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, user.id))
+      .limit(1);
+
+    if (!fullUser) {
+      return { password, error: 'User not found.' };
+    }
+
+    const isPasswordValid = await comparePasswords(password, fullUser.passwordHash);
     if (!isPasswordValid) {
       return {
         password,
@@ -389,7 +414,7 @@ const updateAccountSchema = z.object({
 
 export const updateAccount = validatedActionWithUser(
   updateAccountSchema,
-  async (data, _, user) => {
+  async (data, _, user: AuthenticatedUser) => {
     const { name, email } = data;
     const userWithTeam = await getUserWithTeam(user.id);
 
@@ -408,7 +433,7 @@ const removeTeamMemberSchema = z.object({
 
 export const removeTeamMember = validatedActionWithUser(
   removeTeamMemberSchema,
-  async (data, _, user) => {
+  async (data, _, user: AuthenticatedUser) => {
     const { memberId } = data;
     const userWithTeam = await getUserWithTeam(user.id);
 
@@ -442,7 +467,7 @@ const inviteTeamMemberSchema = z.object({
 
 export const inviteTeamMember = validatedActionWithUser(
   inviteTeamMemberSchema,
-  async (data, _, user) => {
+  async (data, _, user: AuthenticatedUser) => {
     const { email, role } = data;
     const userWithTeam = await getUserWithTeam(user.id);
 
@@ -480,13 +505,17 @@ export const inviteTeamMember = validatedActionWithUser(
       return { error: 'An invitation has already been sent to this email' };
     }
 
+    // Generate a secure token for the invitation
+    const invitationToken = crypto.randomBytes(32).toString('hex');
+
     // Create a new invitation
     await db.insert(invitations).values({
       teamId: userWithTeam.teamId,
       email,
       role,
       invitedBy: user.id,
-      status: 'pending'
+      status: 'pending',
+      token: invitationToken,
     });
 
     await logActivity(
@@ -495,8 +524,8 @@ export const inviteTeamMember = validatedActionWithUser(
       ActivityType.INVITE_TEAM_MEMBER
     );
 
-    // TODO: Send invitation email and include ?inviteId={id} to sign-up URL
-    // await sendInvitationEmail(email, userWithTeam.team.name, role)
+    // TODO: Send invitation email and include ?inviteId={id}&token={token} to sign-up URL
+    // await sendInvitationEmail(email, userWithTeam.team.name, role, invitationToken)
 
     return { success: 'Invitation sent successfully' };
   }

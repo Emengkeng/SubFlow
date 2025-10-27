@@ -28,7 +28,7 @@ async function verifyOrgAccess(userId: number, orgId: string) {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { orgId: string; productId: string } }
+  { params }: { params: Promise<{ orgId: string; productId: string }> }
 ) {
   try {
 
@@ -70,7 +70,7 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { orgId: string; productId: string } }
+  { params }: { params: Promise<{ orgId: string; productId: string }> }
 ) {
   try {
 
@@ -128,7 +128,7 @@ export async function PATCH(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { orgId: string; productId: string } }
+  { params }: { params: Promise<{ orgId: string; productId: string }> }
 ) {
   try {
     const { orgId, productId } = await params;

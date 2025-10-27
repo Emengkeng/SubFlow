@@ -28,7 +28,7 @@ async function verifyOrgAccess(userId: number, orgId: string) {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { orgId: string } }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   try {
     const user = await getUser();
@@ -65,7 +65,7 @@ export async function GET(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { orgId: string } }
+  { params }: { params: Promise<{ orgId: string }> }
 ) {
   try {
     const user = await getUser();
