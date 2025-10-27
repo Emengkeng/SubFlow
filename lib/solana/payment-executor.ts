@@ -7,14 +7,9 @@ import {
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   address,
+  blockhash,
 } from "@solana/kit";
-import {
-  getSetComputeUnitLimitInstruction,
-  getSetComputeUnitPriceInstruction,
-} from "@solana-program/compute-budget";
-import { 
-  getTransferCheckedInstruction,
-} from "@solana-program/token";
+import { getTransferCheckedInstruction } from "@solana-program/token";
 import { SanctumGatewayClient } from "./sanctum-gateway";
 import {
   createPayment,
@@ -48,7 +43,8 @@ export class PaymentExecutor {
 
   /**
    * Execute a direct transfer from customer to merchant + platform
-   * Customer signs and pays for everything (simple, reliable)
+   * Uses Sanctum Gateway's buildGatewayTransaction for optimization
+   * Customer signs and transaction is sent via Gateway's multi-path delivery
    */
   async executeDirectPayment(
     session: PaymentSession & { product: Product & { organization: any } },
@@ -84,43 +80,10 @@ export class PaymentExecutor {
       );
 
       console.log('🔍 Account Addresses:');
-      console.log('Customer wallet:', customerWallet);
-      console.log('Customer token account:', customerTokenAccount.toString());
-      console.log('Merchant token account:', merchantTokenAccount.toString());
-      console.log('Platform token account:', platformTokenAccount.toString());
-
-      // Get blockchain data - CUSTOMER pays for tips
-      // Always fetch fresh blockhash to avoid replay errors
-      console.log('🔄 Fetching fresh blockhash and blockchain data...');
-      
-      const [{ value: latestBlockhash }, priorityFee, tipIxs] = await Promise.all([
-        this.gateway.getLatestBlockhash(),
-        this.gateway.getPriorityFee([
-          customerTokenAccount.toString(),
-          merchantTokenAccount.toString(),
-          platformTokenAccount.toString(),
-        ]),
-        // CRITICAL: Pass CUSTOMER wallet as fee payer for tips
-        this.gateway.getTipInstructions(customerWallet),
-      ]);
-      
-      console.log('✅ Fresh blockhash obtained:', latestBlockhash.blockhash.slice(0, 8) + '...');
-
-      console.log('✅ Tip instructions fetched (customer will pay)');
-
-      // Build compute budget
-      const cuLimit = 300000;
-      const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
-      
-      // Add a tiny bit of randomness to CU price to make each transaction unique
-      // This prevents identical transactions with same blockhash
-      const randomness = BigInt(Math.floor(Math.random() * 10));
-      const uniqueCuPrice = cuPrice + randomness;
-      
-      const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
-      const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: uniqueCuPrice });
-      
-      console.log('⚙️  Compute units:', cuLimit, '| Price:', uniqueCuPrice.toString(), 'micro-lamports');
+      console.log('   Customer wallet:', customerWallet);
+      console.log('   Customer token account:', customerTokenAccount.toString());
+      console.log('   Merchant token account:', merchantTokenAccount.toString());
+      console.log('   Platform token account:', platformTokenAccount.toString());
 
       // Transfer to merchant
       const merchantTransferIx = getTransferCheckedInstruction({
@@ -142,36 +105,63 @@ export class PaymentExecutor {
         decimals: session.tokenDecimals,
       });
 
-      // Add all instructions including tips
-      instructions.push(
-        cuLimitIx, 
-        cuPriceIx, 
-        merchantTransferIx, 
-        platformTransferIx, 
-        ...tipIxs
-      );
+      instructions.push(merchantTransferIx, platformTransferIx);
 
-      console.log(`📦 Built transaction with ${instructions.length} instructions`);
+      console.log(`📦 Built ${instructions.length} transfer instructions`);
 
-      // Build transaction with customer as ONLY signer
+      // ============================================================
+      // KEY INTEGRATION: Use Sanctum Gateway's buildGatewayTransaction
+      // This optimizes the transaction with:
+      // - Simulation to determine optimal CU limit
+      // - Real-time priority fee fetching
+      // - Jito tip instructions for better delivery
+      // - Fresh blockhash management
+      // ============================================================
+      
       const customerSigner = { address: customerWalletAddr };
       
-      const compiledTransaction = pipe(
+      // Build initial unsigned transaction with dummy blockhash
+      const initialTransaction = pipe(
         createTransactionMessage({ version: 0 }),
         (txm) => appendTransactionMessageInstructions(instructions, txm),
         (txm) => setTransactionMessageFeePayerSigner(customerSigner as any, txm),
-        (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
+        (m) => setTransactionMessageLifetimeUsingBlockhash(
+          {
+            blockhash: blockhash("11111111111111111111111111111111"),
+            lastValidBlockHeight: 1000n,
+          },
+          m
+        ),
         compileTransaction
       );
 
-      // Serialize for frontend (NO backend signature - customer signs everything)
-      const transactionBytes = getTransactionEncoder().encode(compiledTransaction);
-      const base64Transaction = Buffer.from(transactionBytes).toString('base64');
+      console.log('🌐 Optimizing transaction via Sanctum Gateway buildGatewayTransaction...');
+      
+      const buildResult = await this.gateway.buildGatewayTransaction(
+        initialTransaction,
+        {
+          skipSimulation: false,     // Let Gateway simulate and set CU limit
+          skipPriorityFee: false,    // Let Gateway fetch and set priority fees
+          cuPriceRange: "medium",    // Medium priority fees
+          jitoTipRange: "medium",    // Medium Jito tips
+          deliveryMethodType: "rpc",
+        }
+      );
 
-      console.log('✅ Transaction compiled successfully');
-      console.log('📊 Transaction size:', transactionBytes.length, 'bytes');
-      console.log('👤 Fee payer:', customerWallet);
-      console.log('✍️  Required signatures: 1 (customer only)');
+      const optimizedTransactionBytes = getTransactionEncoder().encode(
+        buildResult.transaction
+      );
+      const base64Transaction = Buffer.from(optimizedTransactionBytes).toString('base64');
+
+      console.log('✅ Gateway-optimized transaction ready:');
+      console.log('   Blockhash:', buildResult.latestBlockhash.blockhash.slice(0, 8) + '...');
+      console.log('   Last Valid Block:', buildResult.latestBlockhash.lastValidBlockHeight);
+      console.log('   Transaction size:', optimizedTransactionBytes.length, 'bytes');
+      console.log('   Optimizations applied:');
+      console.log('     ✓ CU limit set via simulation');
+      console.log('     ✓ Priority fees fetched and applied');
+      console.log('     ✓ Jito tip instructions added');
+      console.log('     ✓ Fresh blockhash attached');
 
       return {
         txSignature: '',
@@ -184,10 +174,12 @@ export class PaymentExecutor {
           totalAmount: session.totalAmount,
           gasCost: '0',
           transaction: base64Transaction,
+          gatewayOptimized: true,
+          blockhash: buildResult.latestBlockhash.blockhash,
         },
       };
     } catch (error: any) {
-      console.error(`❌ Payment failed:`, error);
+      console.error(`❌ Payment preparation failed:`, error);
       
       await addToDeadLetterQueue({
         sessionId: session.id,
@@ -200,6 +192,9 @@ export class PaymentExecutor {
     }
   }
 
+  /**
+   * Confirm a payment on-chain after customer signs and sends
+   */
   async confirmPayment(
     sessionId: string,
     txSignature: string
@@ -207,6 +202,7 @@ export class PaymentExecutor {
     console.log(`✅ Confirming payment: ${txSignature}`);
 
     try {
+      // Use Gateway's confirmation tracking
       const confirmed = await this.gateway.confirmTransaction(txSignature, 30);
 
       if (!confirmed) {
@@ -218,6 +214,7 @@ export class PaymentExecutor {
         throw new Error('Session not found');
       }
 
+      // Create payment record
       const payment = await createPayment({
         sessionId,
         productId: session.productId,
@@ -227,11 +224,12 @@ export class PaymentExecutor {
         totalAmount: session.totalAmount,
         gasCost: '0',
         txSignature,
-        deliveryMethod: 'customer_signed',
+        deliveryMethod: 'gateway_multi_path',
       });
 
       await updatePayment(payment.id, { status: 'confirmed' });
 
+      // Record platform revenue
       const platformConfig = await getPlatformConfig();
       if (platformConfig) {
         await createPlatformRevenue({
