@@ -7,6 +7,7 @@ import {
   setTransactionMessageFeePayerSigner,
   setTransactionMessageLifetimeUsingBlockhash,
   address,
+  blockhash,
 } from "@solana/kit";
 import {
   getSetComputeUnitLimitInstruction,
@@ -89,39 +90,6 @@ export class PaymentExecutor {
       console.log('Merchant token account:', merchantTokenAccount.toString());
       console.log('Platform token account:', platformTokenAccount.toString());
 
-      // Get blockchain data - CUSTOMER pays for tips
-      // Always fetch fresh blockhash to avoid replay errors
-      console.log('🔄 Fetching fresh blockhash and blockchain data...');
-      
-      const [{ value: latestBlockhash }, priorityFee, tipIxs] = await Promise.all([
-        this.gateway.getLatestBlockhash(),
-        this.gateway.getPriorityFee([
-          customerTokenAccount.toString(),
-          merchantTokenAccount.toString(),
-          platformTokenAccount.toString(),
-        ]),
-        // CRITICAL: Pass CUSTOMER wallet as fee payer for tips
-        this.gateway.getTipInstructions(customerWallet),
-      ]);
-      
-      console.log('✅ Fresh blockhash obtained:', latestBlockhash.blockhash.slice(0, 8) + '...');
-
-      console.log('✅ Tip instructions fetched (customer will pay)');
-
-      // Build compute budget
-      const cuLimit = 300000;
-      const cuPrice = BigInt(Math.floor(Number(priorityFee) * 1.2));
-      
-      // Add a tiny bit of randomness to CU price to make each transaction unique
-      // This prevents identical transactions with same blockhash
-      const randomness = BigInt(Math.floor(Math.random() * 10));
-      const uniqueCuPrice = cuPrice + randomness;
-      
-      const cuLimitIx = getSetComputeUnitLimitInstruction({ units: cuLimit });
-      const cuPriceIx = getSetComputeUnitPriceInstruction({ microLamports: uniqueCuPrice });
-      
-      console.log('⚙️  Compute units:', cuLimit, '| Price:', uniqueCuPrice.toString(), 'micro-lamports');
-
       // Transfer to merchant
       const merchantTransferIx = getTransferCheckedInstruction({
         source: address(customerTokenAccount.toString()),
@@ -142,36 +110,51 @@ export class PaymentExecutor {
         decimals: session.tokenDecimals,
       });
 
-      // Add all instructions including tips
-      instructions.push(
-        cuLimitIx, 
-        cuPriceIx, 
-        merchantTransferIx, 
-        platformTransferIx, 
-        ...tipIxs
-      );
+      instructions.push(merchantTransferIx, platformTransferIx);
 
-      console.log(`📦 Built transaction with ${instructions.length} instructions`);
-
-      // Build transaction with customer as ONLY signer
+      console.log(`📦 Built transaction with ${instructions.length} transfer instructions`);
+      
+      // Build initial unsigned transaction
       const customerSigner = { address: customerWalletAddr };
       
-      const compiledTransaction = pipe(
+      const initialTransaction = pipe(
         createTransactionMessage({ version: 0 }),
         (txm) => appendTransactionMessageInstructions(instructions, txm),
         (txm) => setTransactionMessageFeePayerSigner(customerSigner as any, txm),
-        (m) => setTransactionMessageLifetimeUsingBlockhash(latestBlockhash, m),
+        // Use dummy blockhash - Gateway will replace it
+        (m) => setTransactionMessageLifetimeUsingBlockhash(
+          {
+            blockhash: blockhash("11111111111111111111111111111111"),
+            lastValidBlockHeight: 1000n,
+          },
+          m
+        ),
         compileTransaction
       );
 
-      // Serialize for frontend (NO backend signature - customer signs everything)
-      const transactionBytes = getTransactionEncoder().encode(compiledTransaction);
-      const base64Transaction = Buffer.from(transactionBytes).toString('base64');
+      // Call Sanctum Gateway's buildGatewayTransaction
+      console.log('🌐 Calling Sanctum Gateway buildGatewayTransaction...');
+      const buildResponse = await this.gateway.buildGatewayTransaction(
+        initialTransaction,
+        {
+          skipSimulation: false,
+          skipPriorityFee: false,
+          cuPriceRange: "medium",
+          jitoTipRange: "medium",
+          deliveryMethodType: "rpc",
+        }
+      );
 
-      console.log('✅ Transaction compiled successfully');
-      console.log('📊 Transaction size:', transactionBytes.length, 'bytes');
-      console.log('👤 Fee payer:', customerWallet);
-      console.log('✍️  Required signatures: 1 (customer only)');
+      const optimizedTransactionBytes = getTransactionEncoder().encode(
+        buildResponse.transaction
+      );
+      const base64Transaction = Buffer.from(optimizedTransactionBytes).toString('base64');
+
+      console.log('✅ Gateway optimized transaction:');
+      console.log('   - Blockhash:', buildResponse.latestBlockhash.blockhash.slice(0, 8) + '...');
+      console.log('   - Transaction size:', optimizedTransactionBytes.length, 'bytes');
+      console.log('   - CU limit & priority fee automatically set by Gateway');
+      console.log('   - Jito tips added for better delivery');
 
       return {
         txSignature: '',
@@ -184,6 +167,7 @@ export class PaymentExecutor {
           totalAmount: session.totalAmount,
           gasCost: '0',
           transaction: base64Transaction,
+          gatewayOptimized: true, // Flag to show Gateway was used
         },
       };
     } catch (error: any) {

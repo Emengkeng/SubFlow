@@ -119,6 +119,62 @@ export class SanctumGatewayClient {
     throw new Error("No successful delivery method");
   }
 
+  async buildGatewayTransaction(
+    unsignedTransaction: any,
+    options?: {
+      skipSimulation?: boolean;
+      skipPriorityFee?: boolean;
+      cuPriceRange?: "low" | "medium" | "high";
+      jitoTipRange?: "low" | "medium" | "high" | "max";
+      expireInSlots?: number;
+      deliveryMethodType?: "rpc" | "jito" | "sanctum-sender" | "helius-sender";
+    }
+  ): Promise<{
+    transaction: any;
+    latestBlockhash: {
+      blockhash: string;
+      lastValidBlockHeight: string;
+    };
+  }> {
+    const buildId = `build-${Date.now()}`;
+    const dataToSend = {
+      id: buildId,
+      jsonrpc: "2.0",
+      method: "buildGatewayTransaction",
+      params: [
+        getBase64EncodedWireTransaction(unsignedTransaction),
+        options || {},
+      ],
+    };
+
+    console.log("🔧 Building transaction via Sanctum Gateway...");
+    const response = await fetch(this.gatewayUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(dataToSend),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to build gateway transaction: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(`Gateway error: ${JSON.stringify(data.error)}`);
+    }
+
+    const { transaction: encodedTransaction, latestBlockhash } = data.result;
+    const transaction = getBase64Decoder().decode(
+      getBase64Encoder().encode(encodedTransaction)
+    );
+
+    return {
+      transaction,
+      latestBlockhash,
+    };
+  }
+
   async getLatestBlockhash() {
     return await this.rpc.getLatestBlockhash().send();
   }
